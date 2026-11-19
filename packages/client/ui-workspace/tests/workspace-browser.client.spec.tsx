@@ -8,14 +8,14 @@ import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within }
 import { allowAllAccess, bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
-  WorkspaceId, WorkspaceSnapshot, WorkspaceView,
+  WorkspaceGroupView, WorkspaceGroupId, WorkspaceId, WorkspaceSnapshot, WorkspaceView,
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session-status/client'
 import type { SessionPendingInteraction } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import type { DirectoryFlowOwnerProps, WorkspaceActionRequest, WorkspaceBrowserProps } from '../src/client/contract/slots.ts'
+import type { DirectoryFlowOwnerProps, WorkspaceActionRequest, WorkspaceBrowserProps, WorkspaceGroupActionRequest } from '../src/client/contract/slots.ts'
 import { createWorkspaceShortcutControls } from '../src/client/shortcuts.ts'
 import { createWorkspaceViewStore, FLAT_SESSION_ORDER_KEY } from '../src/client/stores.ts'
 import { UNGROUPED_KEY } from '../src/client/tree.ts'
@@ -75,10 +75,12 @@ const workspaceState = (
   items: readonly WorkspaceView[],
   archivedSessionIds: readonly SessionId[] = [],
   pinnedSessionIds: readonly SessionId[] = [],
+  groups: readonly WorkspaceGroupView[] = [],
 ): WorkspaceSnapshot => ({
   items,
   archivedSessionIds,
   pinnedSessionIds,
+  groups,
   state: 'idle',
   phase: 'ready',
   error: null,
@@ -114,9 +116,17 @@ const SECTION_SCROLLER = { bindScrollerRef: () => {} }
 function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
   const controls = createWorkspaceShortcutControls()
   const request = createSnapshotStore<WorkspaceActionRequest | null>(null)
+  const groupRequest = createSnapshotStore<WorkspaceGroupActionRequest | null>(null)
   const store = createWorkspaceViewStore().create()
   const props: WorkspaceBrowserProps = {
     useWorkspaceActionRequest: bindSnapshotSelector(request),
+    useGroupActionRequest: bindSnapshotSelector(groupRequest),
+    settleGroupAction: () => { groupRequest.set(null) },
+    requestGroupAction: (value) => { groupRequest.set(value) },
+    createGroup: vi.fn(async () => []),
+    renameGroup: vi.fn(async () => []),
+    deleteGroup: vi.fn(async () => []),
+    setWorkspaceGroup: vi.fn(async () => {}),
     settleWorkspaceAction: () => { request.set(null) },
     useContextMenuTarget: selector => selector(null),
     useShortcuts: select => select([]),
@@ -522,9 +532,9 @@ describe('WorkspaceBrowser', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
     expect(screen.getByText('分组方式')).toBeTruthy() // the menu heading label
-    expect(screen.getAllByRole('separator')).toHaveLength(2)
+    expect(screen.getAllByRole('separator')).toHaveLength(3)
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      '按工作区', '按工作区树', '单列表', '手动排序', '最近更新', '隐藏已归档', '全部对话（显示已归档）', '仅显示已归档',
+      '按工作区', '按工作区树', '单列表', '新建分组', '手动排序', '最近更新', '隐藏已归档', '全部对话（显示已归档）', '仅显示已归档',
     ])
     expect(screen.getByRole('menuitem', { name: '按工作区' }).querySelector('svg')).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: '手动排序' }).querySelector('svg')).toBeTruthy()
@@ -2833,5 +2843,83 @@ describe('Workspace tree grouping', () => {
     fireEvent.dragEnd(alpha)
     expect(b.props.insertWorkspaceBefore).toHaveBeenCalledOnce()
     expect(b.props.insertWorkspaceBefore).toHaveBeenCalledWith(wid('alpha'), wid('gamma'))
+  })
+})
+
+describe('Workspace group sections', () => {
+  const groupId = (id: string) => id as WorkspaceGroupId
+
+  it('renders group sections with member workspaces and keeps ungrouped rows top-level', () => {
+    createWorkspaceViewStore().create().actions.setGroupExpanded('alpha', true)
+    mount({
+      useSessions: hook(sessionState([summary('alpha-s', 2)])),
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', ['alpha-s']), workspace('beta', [])],
+        [], [],
+        [{ groupId: groupId('team'), title: 'Team' }],
+      )),
+    })
+    expect(screen.getByText('Team')).toBeTruthy()
+    // Unassigned rows stay top level; assigned rows render under their section.
+    expect(screen.getByText('beta')).toBeTruthy()
+    expect(screen.getByText('alpha')).toBeTruthy()
+    // The session of a grouped workspace renders inside its section.
+    expect(screen.getByText('alpha-s')).toBeTruthy()
+  })
+
+  it('assigns on a section-header drop', () => {
+    const b = mount({
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', [])],
+        [], [],
+        [{ groupId: groupId('team'), title: 'Team' }],
+      )),
+    })
+    const alpha = screen.getByText('alpha').closest('[role="treeitem"]') as HTMLElement
+    const section = screen.getByText('Team').closest('[data-row-key]')!.parentElement as HTMLElement
+    fireEvent.dragStart(alpha, { dataTransfer: dragData() })
+    fireDrag(section, 'dragOver', 10)
+    fireDrag(section, 'drop', 10)
+    fireEvent.dragEnd(alpha)
+    expect(b.props.setWorkspaceGroup).toHaveBeenCalledOnce()
+    expect(b.props.setWorkspaceGroup).toHaveBeenCalledWith(wid('alpha'), groupId('team'))
+  })
+
+  it('unassigns a grouped workspace dropped on an ungrouped row', () => {
+    const b = mount({
+      useWorkspaces: hook(workspaceState(
+        [{ ...workspace('alpha', []), groupId: groupId('team') }, workspace('beta', [])],
+        [], [],
+        [{ groupId: groupId('team'), title: 'Team' }],
+      )),
+    })
+    const alpha = screen.getByText('alpha').closest('[role="treeitem"]') as HTMLElement
+    const beta = screen.getByText('beta').closest('[role="treeitem"]') as HTMLElement
+    fireEvent.dragStart(alpha, { dataTransfer: dragData() })
+    fireDrag(beta.parentElement as HTMLElement, 'drop', 100)
+    fireEvent.dragEnd(alpha)
+    expect(b.props.setWorkspaceGroup).toHaveBeenCalledOnce()
+    expect(b.props.setWorkspaceGroup).toHaveBeenCalledWith(wid('alpha'), undefined)
+  })
+
+  it('toggles a section and resolves its context menu target', () => {
+    const renderFactorySlot = vi.fn(renderMenuButton)
+    mount({
+      useSessions: hook(sessionState([])),
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', [])],
+        [], [],
+        [{ groupId: groupId('team'), title: 'Team' }],
+      )),
+      renderFactorySlot,
+    })
+    const header = screen.getByText('Team').closest('[data-row-key]') as HTMLElement
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(header)
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    expect(renderFactorySlot).toHaveBeenCalledWith('contextMenu.button', {
+      target: { kind: 'workspace-group', value: { groupId: groupId('team'), displayTitle: 'Team' } },
+      label: '分组“Team”的操作', className: rowCss.iconButton,
+    })
   })
 })

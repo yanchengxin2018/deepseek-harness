@@ -18,14 +18,24 @@ import type { WorkspaceEntityHost } from './entity.ts'
 export { WorkspaceMoveInvalidError } from './entity.ts'
 import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath, realpathNormalize } from './paths.ts'
 import { workspaceDomainSpec } from './spec.ts'
-import type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
-import type { SessionActivity, Workspace, WorkspaceId as WorkspaceIdBrand } from './types.ts'
+import type { WorkspaceDomainState, WorkspaceGroupRecord, WorkspaceRecord } from './spec.ts'
+import type {
+  SessionActivity, Workspace, WorkspaceGroup, WorkspaceGroupId, WorkspaceId as WorkspaceIdBrand,
+} from './types.ts'
 
 export type {
   SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap, Workspace,
+  WorkspaceGroup, WorkspaceGroupId,
 } from './types.ts'
-export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
-export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
+export {
+  workspaceDomainState,
+  workspaceGroupRecord,
+  workspaceRecord,
+  workspaceDomainSpec,
+} from './spec.ts'
+export type {
+  WorkspaceDomainState, WorkspaceGroupRecord, WorkspaceRecord,
+} from './spec.ts'
 export { realpathNormalize } from './paths.ts'
 
 /** Identifies one workspace record (see `src/types.ts` for the brand rationale). */
@@ -91,6 +101,17 @@ export class WorkspaceOrderInvalidError extends Error {
   constructor(readonly workspaceId: WorkspaceId) {
     super(`cannot reorder unknown workspace '${workspaceId}'`)
     this.name = 'WorkspaceOrderInvalidError'
+  }
+}
+
+/** A group operation named a group absent from the durable group table, or a workspace record referencing one. */
+export class WorkspaceGroupInvalidError extends Error {
+  /**
+   * @param groupId - Unknown group id.
+   */
+  constructor(readonly groupId: WorkspaceGroupId) {
+    super(`unknown workspace group '${groupId}'`)
+    this.name = 'WorkspaceGroupInvalidError'
   }
 }
 
@@ -497,6 +518,101 @@ export class WorkspaceRegistry extends Service {
   }
 
   /**
+   * The registry-global workspace group table in display order. Groups are
+   * display buckets over the durable workspace order: membership lives on
+   * each workspace record's `groupId`, and group order is independent of
+   * `workspaceIds`.
+   * @returns the group rows in group-table order.
+   */
+  get groups(): readonly WorkspaceGroup[] {
+    return this.requireState().workspaceGroups
+  }
+
+  /**
+   * Create one workspace group durably, appending it to the group table.
+   * @param title - Display title; any non-blank string, duplicates allowed.
+   * @returns the created group.
+   */
+  createGroup(title: string): Promise<WorkspaceGroup> {
+    return this.enqueueOperation(async () => {
+      const trimmed = validateGroupTitle(title)
+      const state = this.requireState()
+      const group: WorkspaceGroupRecord = { id: brandString<WorkspaceGroupId>(randomUUID()), title: trimmed }
+      await this.setState({ ...state, workspaceGroups: [...state.workspaceGroups, group] })
+      return group
+    })
+  }
+
+  /**
+   * Rename one workspace group durably. An id that is not in the group table
+   * rejects; a rename to the current title resolves without writing.
+   * @param id - Group to rename.
+   * @param title - New display title; any non-blank string, duplicates allowed.
+   * @returns resolution after durability.
+   */
+  renameGroup(id: WorkspaceGroupId, title: string): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const trimmed = validateGroupTitle(title)
+      const state = this.requireState()
+      if (!state.workspaceGroups.some(group => group.id === id)) throw new WorkspaceGroupInvalidError(id)
+      const workspaceGroups = state.workspaceGroups.map(group =>
+        group.id === id ? { ...group, title: trimmed } : group)
+      if (sameGroupTitles(workspaceGroups, state.workspaceGroups)) return
+      await this.setState({ ...state, workspaceGroups })
+    })
+  }
+
+  /**
+   * Delete one workspace group durably. Every member record is unassigned in
+   * the same queued operation before the group row is dropped, so no
+   * committed state ever references a missing group; workspaces and their
+   * sessions are untouched. An unknown id resolves without writing.
+   * @param id - Group to delete.
+   * @returns `true` when a group row was deleted, `false` when it was unknown.
+   */
+  deleteGroup(id: WorkspaceGroupId): Promise<boolean> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      if (!state.workspaceGroups.some(group => group.id === id)) return false
+      // The table update chain serializes with entity mutations, so clearing
+      // members through their entities keeps both the records and the entity
+      // snapshots consistent before the group row disappears.
+      for (const entity of this.entities.values()) {
+        if (entity.groupId === id) await entity.setGroup(undefined)
+      }
+      await this.setState({
+        ...state,
+        workspaceGroups: state.workspaceGroups.filter(group => group.id !== id),
+      })
+      return true
+    })
+  }
+
+  /**
+   * Assign one workspace to a group durably, or remove its assignment. The
+   * workspace must be in the durable order and the group (when named) in the
+   * group table. Display metadata only: the registry order is untouched.
+   * An assignment resolving to the current value writes nothing.
+   * @param id - Workspace to assign.
+   * @param groupId - Group to join, or undefined to unassign.
+   * @returns resolution after durability.
+   */
+  setWorkspaceGroup(id: WorkspaceId, groupId?: WorkspaceGroupId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      if (!state.workspaceIds.includes(id)) throw new WorkspaceOrderInvalidError(id)
+      if (groupId !== undefined && !state.workspaceGroups.some(group => group.id === groupId)) {
+        throw new WorkspaceGroupInvalidError(groupId)
+      }
+      const entity = this.entities.get(id)
+      if (entity === undefined) {
+        throw new Error(`workspace registry order references missing workspace '${id}'`)
+      }
+      await entity.setGroup(groupId)
+    })
+  }
+
+  /**
    * Whether a session is live, header-indexed, or present in a fresh
    * persistence listing. Only a definite miss returns false — a failing
    * `sessionPersistence.list()` propagates so storage faults never
@@ -758,17 +874,15 @@ export class WorkspaceRegistry extends Service {
 
     if (!sameIds(state.workspaceIds, workspaceIds)) {
       await this.setState({
+        ...state,
         initialized: false,
         workspaceIds,
-        archivedSessionIds: state.archivedSessionIds,
-        pinnedSessionIds: state.pinnedSessionIds,
       })
     }
     await this.setState({
+      ...state,
       initialized: true,
       workspaceIds,
-      archivedSessionIds: state.archivedSessionIds,
-      pinnedSessionIds: state.pinnedSessionIds,
     })
   }
 
@@ -793,6 +907,7 @@ export class WorkspaceRegistry extends Service {
 
     const paths = new Map<string, WorkspaceId>()
     const accounted = new Map<SessionId, WorkspaceId>()
+    const groupIds = new Set(state.workspaceGroups.map(group => group.id))
     for (const [id, record] of table.entries()) {
       const pathHolder = paths.get(record.path)
       if (pathHolder !== undefined) {
@@ -802,6 +917,11 @@ export class WorkspaceRegistry extends Service {
         )
       }
       paths.set(record.path, id)
+      if (record.groupId !== undefined && !groupIds.has(record.groupId)) {
+        throw new Error(
+          `workspace domain is inconsistent: workspace '${id}' references missing group '${record.groupId}'`,
+        )
+      }
       for (const sessionId of record.sessionIds) {
         const holder = accounted.get(sessionId)
         if (holder !== undefined) {
@@ -936,5 +1056,17 @@ export class WorkspaceRegistry extends Service {
 
 const sameSessionIds = (left: readonly SessionId[], right: readonly SessionId[]): boolean =>
   left.length === right.length && left.every((id, index) => id === right[index])
+
+const sameGroupTitles = (
+  left: readonly WorkspaceGroupRecord[],
+  right: readonly WorkspaceGroupRecord[],
+): boolean => left.every((group, index) => group.title === right[index]?.title)
+
+/** Registry-level group title sanity; Remote callers get a structured error from their command layer. */
+function validateGroupTitle(title: string): string {
+  const trimmed = title.trim()
+  if (trimmed === '') throw new Error('workspace group title must be non-blank')
+  return trimmed
+}
 
 export default WorkspaceRegistry

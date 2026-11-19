@@ -12,7 +12,7 @@ import { stat } from 'node:fs/promises'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceRecord } from './spec.ts'
-import type { Workspace, WorkspaceId } from './types.ts'
+import type { Workspace, WorkspaceGroupId, WorkspaceId } from './types.ts'
 import { realpathNormalize } from './paths.ts'
 
 /** An insertSessionBefore request named a session or anchor not on the account (storage failures stay plain errors). */
@@ -111,6 +111,10 @@ export class WorkspaceEntity implements Workspace {
     return this.record.sessionIds.filter(id => this.host.candidateMatches(id, this.record.path))
   }
 
+  get groupId(): WorkspaceGroupId | undefined {
+    return this.record.groupId
+  }
+
   /** Reads the registry's startup and attach-time header index without persistence I/O. */
   getSessionHeaders(): readonly SessionHeader[] {
     return this.sessionIds.map(id => this.host.sessionHeader(id))
@@ -118,6 +122,16 @@ export class WorkspaceEntity implements Workspace {
 
   async setTitle(title: string): Promise<void> {
     await this.mutate(record => ({ ...record, title }))
+  }
+
+  async setGroup(groupId: WorkspaceGroupId | undefined): Promise<void> {
+    await this.mutate((record) => {
+      if (record.groupId === groupId) return record
+      // Rebuild without the key so an unassignment never persists an explicit
+      // `groupId: undefined`; the field stays simply absent on the medium.
+      const { groupId: _dropped, ...rest } = record
+      return groupId === undefined ? rest : { ...rest, groupId }
+    })
   }
 
   async attachSession(sessionId: SessionId): Promise<void> {

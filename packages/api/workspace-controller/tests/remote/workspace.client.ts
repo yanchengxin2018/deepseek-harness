@@ -15,6 +15,12 @@ import type {
   WorkspaceDeleteRequest,
   WorkspaceDeleteValue,
   WorkspaceFollowFrame,
+  WorkspaceGroupAssignRequest,
+  WorkspaceGroupCreateRequest,
+  WorkspaceGroupDeleteRequest,
+  WorkspaceGroupRenameRequest,
+  WorkspaceGroupId,
+  WorkspaceGroupsValue,
   WorkspaceId,
   WorkspaceInsertBeforeRequest,
   WorkspaceInsertSessionBeforeRequest,
@@ -62,14 +68,15 @@ export function workspace(id: string, overrides: Partial<WorkspaceView> = {}): W
 }
 
 /**
- * A baseline frame holding the named Workspaces and no archived or pinned Sessions.
+ * A baseline frame holding the named Workspaces and no archived or pinned
+ * Sessions or groups.
  * @param ids - Workspace ids in registry order.
  * @returns the frame.
  */
 export function baseline(...ids: readonly string[]): WorkspaceBaselineFrame {
   return {
     type: 'baseline',
-    value: { items: ids.map(id => workspace(id)), archivedSessionIds: [], pinnedSessionIds: [] },
+    value: { items: ids.map(id => workspace(id)), archivedSessionIds: [], pinnedSessionIds: [], groups: [] },
   }
 }
 
@@ -107,5 +114,17 @@ export const workspaceWorld: RemoteTable = {
     'workspace/unarchiveSession': (_request: WorkspaceUnarchiveSessionRequest): RemoteResult<WorkspaceArchiveValue> => ok({ archivedSessionIds: [] }),
     'workspace/pinSession': (request: WorkspacePinSessionRequest): RemoteResult<WorkspacePinValue> => ok({ pinnedSessionIds: [request.sessionId] }),
     'workspace/unpinSession': (_request: WorkspaceUnpinSessionRequest): RemoteResult<WorkspacePinValue> => ok({ pinnedSessionIds: [] }),
+    'workspace/createGroup': (request: WorkspaceGroupCreateRequest): RemoteResult<WorkspaceGroupsValue> => ok({
+      groups: [{ groupId: request.title as WorkspaceGroupId, title: request.title }],
+    }),
+    'workspace/renameGroup': (request: WorkspaceGroupRenameRequest): RemoteResult<WorkspaceGroupsValue> => ok({
+      groups: [{ groupId: request.groupId, title: request.title }],
+    }),
+    'workspace/deleteGroup': (_request: WorkspaceGroupDeleteRequest): RemoteResult<WorkspaceGroupsValue> => ok({ groups: [] }),
+    'workspace/setWorkspaceGroup': (request: WorkspaceGroupAssignRequest): RemoteResult<WorkspaceValue> => ok({
+      workspace: workspace(String(request.workspaceId), {
+        ...(request.groupId === undefined ? {} : { groupId: request.groupId }),
+      }),
+    }),
   },
 }

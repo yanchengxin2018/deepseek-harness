@@ -98,6 +98,7 @@ function workspaceState(
     items,
     archivedSessionIds,
     pinnedSessionIds: [],
+    groups: [],
     phase,
     state: phase === 'ready' ? 'idle' : 'loading',
     error: null,
@@ -201,6 +202,10 @@ class FakeWorkspaces implements IWorkspaces {
   declare readonly delete: IWorkspaces['delete']
   declare readonly insertBefore: IWorkspaces['insertBefore']
   declare readonly insertSessionBefore: IWorkspaces['insertSessionBefore']
+  declare readonly createGroup: IWorkspaces['createGroup']
+  declare readonly renameGroup: IWorkspaces['renameGroup']
+  declare readonly deleteGroup: IWorkspaces['deleteGroup']
+  declare readonly setWorkspaceGroup: IWorkspaces['setWorkspaceGroup']
   readonly pinCalls: SessionId[] = []
   readonly unpinCalls: SessionId[] = []
   onPin: IWorkspaces['pinSession'] = async (sessionId) => {

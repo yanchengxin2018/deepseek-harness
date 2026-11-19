@@ -11,6 +11,11 @@ import type {
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
   WorkspaceDeleteValue,
+  WorkspaceGroupAssignRequest,
+  WorkspaceGroupCreateRequest,
+  WorkspaceGroupDeleteRequest,
+  WorkspaceGroupRenameRequest,
+  WorkspaceGroupsValue,
   WorkspaceInsertSessionBeforeRequest,
   WorkspaceOrderValue,
   WorkspacePinSessionRequest,
@@ -18,6 +23,7 @@ import type {
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
+  WorkspaceGroupView,
   WorkspaceId,
   WorkspaceView,
 } from '../types.ts'
@@ -35,6 +41,8 @@ export interface WorkspaceSnapshot {
   readonly archivedSessionIds: WorkspaceArchiveValue['archivedSessionIds']
   /** Complete registry-global pin set, most recently pinned first. */
   readonly pinnedSessionIds: WorkspacePinValue['pinnedSessionIds']
+  /** Complete registry-global group table in Host group-table order. */
+  readonly groups: readonly WorkspaceGroupView[]
   readonly state: 'idle' | 'loading' | 'error'
   readonly phase: WorkspaceListPhase
   readonly error: RemoteFailure | null
@@ -54,6 +62,8 @@ export interface WorkspaceFollowSink {
   replaceArchived(sessionIds: WorkspaceArchiveValue['archivedSessionIds']): void
   /** Replace the complete pinned Session set. */
   replacePinned(pinnedSessionIds: WorkspacePinValue['pinnedSessionIds']): void
+  /** Replace the complete Workspace group table. */
+  replaceGroups(groups: readonly WorkspaceGroupView[]): void
 }
 
 /**
@@ -63,6 +73,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   private items: readonly WorkspaceView[] = []
   private archivedSessionIds: WorkspaceArchiveValue['archivedSessionIds'] = []
   private pinnedSessionIds: WorkspacePinValue['pinnedSessionIds'] = []
+  private groups: readonly WorkspaceGroupView[] = []
   private state: WorkspaceSnapshot['state'] = 'loading'
   private phase: WorkspaceListPhase = 'pending'
   private error: RemoteFailure | null = null
@@ -76,6 +87,8 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   private archiveRequestSeq = 0
   /** Latest pin-set request; a later request or a pushed set supersedes it. */
   private pinRequestSeq = 0
+  /** Latest group-table request; a later request or a pushed set supersedes it. */
+  private groupRequestSeq = 0
   /** Host Workspace ids are never reused, so delayed data cannot resurrect a removed row. */
   private readonly removedIds = new Set<WorkspaceId>()
   private readonly listeners = new Set<() => void>()
@@ -258,6 +271,77 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   }
 
   /**
+   * Create one Workspace group and install the returned complete group table.
+   * A reply superseded by a later group request or a pushed set installs nothing.
+   * @param input - group title.
+   * @returns generated Remote result.
+   */
+  async createGroup(
+    input: WorkspaceGroupCreateRequest,
+  ): Promise<RemoteResult<WorkspaceGroupsValue>> {
+    const requestSeq = ++this.groupRequestSeq
+    const result = await this.remote.createGroup(input)
+    if (result.ok && requestSeq === this.groupRequestSeq) {
+      this.installGroups(result.value.groups)
+    }
+    return result
+  }
+
+  /**
+   * Rename one Workspace group and install the returned complete group table.
+   * A reply superseded by a later group request or a pushed set installs nothing.
+   * @param groupId - target group.
+   * @param title - new display title.
+   * @returns generated Remote result.
+   */
+  async renameGroup(
+    groupId: WorkspaceGroupRenameRequest['groupId'],
+    title: string,
+  ): Promise<RemoteResult<WorkspaceGroupsValue>> {
+    const requestSeq = ++this.groupRequestSeq
+    const result = await this.remote.renameGroup({ groupId, title })
+    if (result.ok && requestSeq === this.groupRequestSeq) {
+      this.installGroups(result.value.groups)
+    }
+    return result
+  }
+
+  /**
+   * Delete one Workspace group and install the returned complete group table.
+   * A reply superseded by a later group request or a pushed set installs nothing.
+   * @param groupId - target group; its members become ungrouped, never deleted.
+   * @returns generated Remote result.
+   */
+  async deleteGroup(
+    groupId: WorkspaceGroupDeleteRequest['groupId'],
+  ): Promise<RemoteResult<WorkspaceGroupsValue>> {
+    const requestSeq = ++this.groupRequestSeq
+    const result = await this.remote.deleteGroup({ groupId })
+    if (result.ok && requestSeq === this.groupRequestSeq) {
+      this.installGroups(result.value.groups)
+    }
+    return result
+  }
+
+  /**
+   * Assign one Workspace to a group (or unassign it) and merge the returned row.
+   * @param workspaceId - Workspace to assign.
+   * @param groupId - Group to join, or undefined to unassign.
+   * @returns generated Remote result.
+   */
+  async setWorkspaceGroup(
+    workspaceId: WorkspaceGroupAssignRequest['workspaceId'],
+    groupId?: WorkspaceGroupAssignRequest['groupId'],
+  ): Promise<RemoteResult<WorkspaceValue>> {
+    const result = await this.remote.setWorkspaceGroup({
+      workspaceId,
+      ...groupId === undefined ? {} : { groupId },
+    })
+    if (result.ok) this.upsert(result.value.workspace)
+    return result
+  }
+
+  /**
    * Replace the projection from one complete stream-generation baseline.
    * @param baseline - complete Workspace and archive projection.
    */
@@ -265,9 +349,11 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
     this.orderFrameGeneration++
     this.archiveRequestSeq++
     this.pinRequestSeq++
+    this.groupRequestSeq++
     this.installViews(baseline.items)
     this.installArchived(baseline.archivedSessionIds)
     this.installPinned(baseline.pinnedSessionIds)
+    this.installGroups(baseline.groups)
     this.state = 'idle'
     this.phase = 'ready'
     this.error = null
@@ -306,6 +392,15 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
   replacePinned(pinnedSessionIds: WorkspacePinValue['pinnedSessionIds']): void {
     this.pinRequestSeq++
     this.installPinned(pinnedSessionIds)
+  }
+
+  /**
+   * Replace the Workspace group table from the current follow generation.
+   * @param groups - complete Host-confirmed group table in group-table order.
+   */
+  replaceGroups(groups: readonly WorkspaceGroupView[]): void {
+    this.groupRequestSeq++
+    this.installGroups(groups)
   }
 
   /** Keep the last complete projection visible while a lost carrier reconnects. */
@@ -350,6 +445,7 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
       items: this.items,
       archivedSessionIds: this.archivedSessionIds,
       pinnedSessionIds: this.pinnedSessionIds,
+      groups: this.groups,
       state: this.state,
       phase: this.phase,
       error: this.error,
@@ -367,6 +463,12 @@ export class ClientWorkspaceModel implements WorkspaceFollowSink {
     if (pinnedSessionIds.length === this.pinnedSessionIds.length
       && pinnedSessionIds.every((id, index) => id === this.pinnedSessionIds[index])) return
     this.pinnedSessionIds = [...pinnedSessionIds]
+    this.invalidate()
+  }
+
+  private installGroups(groups: readonly WorkspaceGroupView[]): void {
+    if (sameGroups(this.groups, groups)) return
+    this.groups = [...groups]
     this.invalidate()
   }
 
@@ -464,4 +566,15 @@ function insertIdBefore(
   const without = ids.filter(candidate => candidate !== id)
   const at = beforeId === undefined ? without.length : without.indexOf(beforeId)
   return [...without.slice(0, at), id, ...without.slice(at)]
+}
+
+function sameGroups(
+  left: readonly WorkspaceGroupView[],
+  right: readonly WorkspaceGroupView[],
+): boolean {
+  return left.length === right.length
+    && left.every((group, index) => {
+      const other = right[index]
+      return other !== undefined && group.groupId === other.groupId && group.title === other.title
+    })
 }

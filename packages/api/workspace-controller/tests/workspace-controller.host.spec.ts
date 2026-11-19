@@ -376,13 +376,57 @@ describe('WorkspaceController follow', () => {
     }
   })
 
+  it('emits the complete group table after group mutations and assignments on workspace upserts', async () => {
+    const { controller, root } = await harness()
+    const abort = new AbortController()
+    const iterator = controller.follow(abort.signal)[Symbol.asyncIterator]()
+    try {
+      await expect(nextFrame(iterator)).resolves.toEqual({
+        type: 'baseline',
+        value: { items: [], archivedSessionIds: [], pinnedSessionIds: [], groups: [] },
+      })
+      const workspace = await controller.create({ path: stageDir(root, 'grouped') })
+      await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'upsert' })
+      await expect(nextFrame(iterator)).resolves.toEqual({ type: 'order', workspaceIds: [workspace.workspace.workspaceId] })
+
+      const group = await controller.createGroup({ title: 'Team' })
+      await expect(nextFrame(iterator)).resolves.toEqual({ type: 'groups', groups: group.groups })
+      await expect(controller.setWorkspaceGroup({
+        workspaceId: workspace.workspace.workspaceId,
+        groupId: group.groups[0]!.groupId,
+      })).resolves.toMatchObject({
+        workspace: { workspaceId: workspace.workspace.workspaceId, groupId: group.groups[0]!.groupId },
+      })
+      await expect(nextFrame(iterator)).resolves.toMatchObject({
+        type: 'upsert',
+        workspace: { workspaceId: workspace.workspace.workspaceId, groupId: group.groups[0]!.groupId },
+      })
+
+      await expect(controller.renameGroup({ groupId: group.groups[0]!.groupId, title: 'Renamed' }))
+        .resolves.toEqual({ groups: [{ groupId: group.groups[0]!.groupId, title: 'Renamed' }] })
+      await expect(nextFrame(iterator)).resolves.toEqual({
+        type: 'groups', groups: [{ groupId: group.groups[0]!.groupId, title: 'Renamed' }],
+      })
+      await expect(controller.deleteGroup({ groupId: group.groups[0]!.groupId })).resolves.toEqual({ groups: [] })
+      // Member unassignment commits (and publishes) before the group row drops.
+      const unassigned = await nextFrame(iterator)
+      if (unassigned.type !== 'upsert') throw new Error('expected the unassignment upsert')
+      expect(unassigned.workspace).toMatchObject({ workspaceId: workspace.workspace.workspaceId })
+      expect('groupId' in unassigned.workspace).toBe(false)
+      await expect(nextFrame(iterator)).resolves.toEqual({ type: 'groups', groups: [] })
+    } finally {
+      abort.abort()
+      await iterator.return?.()
+    }
+  })
+
   it('starts with a complete baseline and emits committed increments in domain order', async () => {
     const { controller, ctx, root } = await harness()
     const abort = new AbortController()
     const iterator = controller.follow(abort.signal)[Symbol.asyncIterator]()
     await expect(nextFrame(iterator)).resolves.toEqual({
       type: 'baseline',
-      value: { items: [], archivedSessionIds: [], pinnedSessionIds: [] },
+      value: { items: [], archivedSessionIds: [], pinnedSessionIds: [], groups: [] },
     })
 
     const first = await controller.create({ path: stageDir(root, 'first') })
@@ -478,6 +522,7 @@ describe('WorkspaceController follow', () => {
         items: [expect.objectContaining({ workspaceId: shownId, sessionIds: [shared.id] })],
         archivedSessionIds: [],
         pinnedSessionIds: [shared.id],
+        groups: [],
       },
     })
 

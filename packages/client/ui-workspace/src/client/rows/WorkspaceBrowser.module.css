@@ -514,6 +514,17 @@
   bottom: -8px;
 }
 
+/* A user-defined workspace section, and the highlight a workspace drag shows
+   while its assignment drop target is the section header or the ungrouped
+   bucket. */
+.workspaceSection {
+  border-radius: var(--dsw-radius-sm);
+}
+
+.workspaceSectionDrop {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
 .sessionOverflowButton {
   width: 100%;
   height: 28px;

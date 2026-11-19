@@ -5109,6 +5109,30 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the complete resulting pin set, most recently pinned first.',
       },
       {
+        signature: '@Remote(\'createGroup\') createGroup(request: WorkspaceGroupCreateRequest): Promise<WorkspaceGroupsValue>',
+        description: 'Create one Workspace group.',
+        parameters: [{ name: 'request', description: 'group title.' }],
+        returns: 'the complete resulting group table in group-table order.',
+      },
+      {
+        signature: '@Remote(\'renameGroup\') renameGroup(request: WorkspaceGroupRenameRequest): Promise<WorkspaceGroupsValue>',
+        description: 'Rename one Workspace group.',
+        parameters: [{ name: 'request', description: 'group identity and proposed title.' }],
+        returns: 'the complete resulting group table in group-table order.',
+      },
+      {
+        signature: '@Remote(\'deleteGroup\') deleteGroup(request: WorkspaceGroupDeleteRequest): Promise<WorkspaceGroupsValue>',
+        description: 'Delete one Workspace group; its members become ungrouped, never deleted.',
+        parameters: [{ name: 'request', description: 'group identity to remove.' }],
+        returns: 'the complete resulting group table in group-table order.',
+      },
+      {
+        signature: '@Remote(\'setWorkspaceGroup\') setWorkspaceGroup(request: WorkspaceGroupAssignRequest): Promise<WorkspaceValue>',
+        description: 'Assign one Workspace to a Workspace group, or unassign it.',
+        parameters: [{ name: 'request', description: 'Workspace identity plus the group to join, or none to unassign.' }],
+        returns: 'the updated Workspace projection.',
+      },
+      {
         signature: '@Remote({ mode: \'stream\' }) async *follow(signal: AbortSignal): AsyncIterable<WorkspaceFollowFrame>',
         description: 'Stream a complete Workspace baseline followed by ordered increments. A non-owner receives only the Workspaces and Sessions `allows()` admits. When a delivered Workspace is no longer admitted at its next change or the next order change, the stream sends a `replace` frame with the complete filtered state instead of a `remove`, because a Client never resurrects a removed Workspace; a `remove` frame reports a deletion and reaches only a Client that received that Workspace.',
         parameters: [{ name: 'signal', description: 'generation cancellation.' }],
@@ -5224,6 +5248,30 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'unpinSession(sessionId: SessionId): Promise<void>',
         description: 'Unpin one session durably by dropping it from the registry-global pin set. Unpinning runs no session-existence check because removing an id cannot introduce an unknown one, so an entry whose session is gone still resolves. An id that is not pinned resolves without writing.',
         parameters: [{ name: 'sessionId', description: 'The session to unpin.' }],
+        returns: 'resolution after durability.',
+      },
+      {
+        signature: 'createGroup(title: string): Promise<WorkspaceGroup>',
+        description: 'Create one workspace group durably, appending it to the group table.',
+        parameters: [{ name: 'title', description: 'Display title; any non-blank string, duplicates allowed.' }],
+        returns: 'the created group.',
+      },
+      {
+        signature: 'renameGroup(id: WorkspaceGroupId, title: string): Promise<void>',
+        description: 'Rename one workspace group durably. An id that is not in the group table rejects; a rename to the current title resolves without writing.',
+        parameters: [{ name: 'id', description: 'Group to rename.' }, { name: 'title', description: 'New display title; any non-blank string, duplicates allowed.' }],
+        returns: 'resolution after durability.',
+      },
+      {
+        signature: 'deleteGroup(id: WorkspaceGroupId): Promise<boolean>',
+        description: 'Delete one workspace group durably. Every member record is unassigned in the same queued operation before the group row is dropped, so no committed state ever references a missing group; workspaces and their sessions are untouched. An unknown id resolves without writing.',
+        parameters: [{ name: 'id', description: 'Group to delete.' }],
+        returns: '`true` when a group row was deleted, `false` when it was unknown.',
+      },
+      {
+        signature: 'setWorkspaceGroup(id: WorkspaceId, groupId?: WorkspaceGroupId): Promise<void>',
+        description: 'Assign one workspace to a group durably, or remove its assignment. The workspace must be in the durable order and the group (when named) in the group table. Display metadata only: the registry order is untouched. An assignment resolving to the current value writes nothing.',
+        parameters: [{ name: 'id', description: 'Workspace to assign.' }, { name: 'groupId', description: 'Group to join, or undefined to unassign.' }],
         returns: 'resolution after durability.',
       },
       {
@@ -11425,7 +11473,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Workspace',
-    declaration: 'export interface Workspace {\n    readonly id: WorkspaceId;\n    readonly path: string;\n    readonly title: string;\n    readonly createdAt: string;\n    readonly updatedAt: string;\n    readonly sessionIds: readonly SessionId[];\n    getSessionHeaders(): readonly SessionHeader[];\n    setTitle(title: string): Promise<void>;\n    attachSession(sessionId: SessionId): Promise<void>;\n    insertSessionBefore(sessionId: SessionId, beforeSessionId?: SessionId): Promise<void>;\n    detachSession(sessionId: SessionId): Promise<void>;\n    status(): Promise<\'ok\' | \'missing-dir\'>;\n}',
+    declaration: 'export interface Workspace {\n    readonly id: WorkspaceId;\n    readonly path: string;\n    readonly title: string;\n    readonly createdAt: string;\n    readonly updatedAt: string;\n    readonly sessionIds: readonly SessionId[];\n    readonly groupId: WorkspaceGroupId | undefined;\n    getSessionHeaders(): readonly SessionHeader[];\n    setTitle(title: string): Promise<void>;\n    setGroup(groupId: WorkspaceGroupId | undefined): Promise<void>;\n    attachSession(sessionId: SessionId): Promise<void>;\n    insertSessionBefore(sessionId: SessionId, beforeSessionId?: SessionId): Promise<void>;\n    detachSession(sessionId: SessionId): Promise<void>;\n    status(): Promise<\'ok\' | \'missing-dir\'>;\n}',
   },
   {
     name: 'WorkspaceArchiveSessionRequest',
@@ -11437,7 +11485,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceBaseline',
-    declaration: 'export interface WorkspaceBaseline {\n    readonly items: readonly WorkspaceView[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n}',
+    declaration: 'export interface WorkspaceBaseline {\n    readonly items: readonly WorkspaceView[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n    readonly groups: readonly WorkspaceGroupView[];\n}',
   },
   {
     name: 'WorkspaceByteRange',
@@ -11533,7 +11581,39 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceFollowIncrement',
-    declaration: 'export type WorkspaceFollowIncrement = {\n    readonly type: \'replace\';\n    readonly value: WorkspaceBaseline;\n} | {\n    readonly type: \'upsert\';\n    readonly workspace: WorkspaceView;\n} | {\n    readonly type: \'remove\';\n    readonly workspaceId: WorkspaceId;\n} | {\n    readonly type: \'order\';\n    readonly workspaceIds: readonly WorkspaceId[];\n} | {\n    readonly type: \'archived\';\n    readonly archivedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'pinned\';\n    readonly pinnedSessionIds: readonly SessionId[];\n};',
+    declaration: 'export type WorkspaceFollowIncrement = {\n    readonly type: \'replace\';\n    readonly value: WorkspaceBaseline;\n} | {\n    readonly type: \'upsert\';\n    readonly workspace: WorkspaceView;\n} | {\n    readonly type: \'remove\';\n    readonly workspaceId: WorkspaceId;\n} | {\n    readonly type: \'order\';\n    readonly workspaceIds: readonly WorkspaceId[];\n} | {\n    readonly type: \'archived\';\n    readonly archivedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'pinned\';\n    readonly pinnedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'groups\';\n    readonly groups: readonly WorkspaceGroupView[];\n};',
+  },
+  {
+    name: 'WorkspaceGroup',
+    declaration: 'export interface WorkspaceGroup {\n    readonly id: WorkspaceGroupId;\n    readonly title: string;\n}',
+  },
+  {
+    name: 'WorkspaceGroupAssignRequest',
+    declaration: 'export interface WorkspaceGroupAssignRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly groupId?: WorkspaceGroupId;\n}',
+  },
+  {
+    name: 'WorkspaceGroupCreateRequest',
+    declaration: 'export interface WorkspaceGroupCreateRequest {\n    readonly title: string;\n}',
+  },
+  {
+    name: 'WorkspaceGroupDeleteRequest',
+    declaration: 'export interface WorkspaceGroupDeleteRequest {\n    readonly groupId: WorkspaceGroupId;\n}',
+  },
+  {
+    name: 'WorkspaceGroupId',
+    declaration: 'export type WorkspaceGroupId = Branded<\'WorkspaceGroupId\'>;',
+  },
+  {
+    name: 'WorkspaceGroupRenameRequest',
+    declaration: 'export interface WorkspaceGroupRenameRequest {\n    readonly groupId: WorkspaceGroupId;\n    readonly title: string;\n}',
+  },
+  {
+    name: 'WorkspaceGroupsValue',
+    declaration: 'export interface WorkspaceGroupsValue {\n    readonly groups: readonly WorkspaceGroupView[];\n}',
+  },
+  {
+    name: 'WorkspaceGroupView',
+    declaration: 'export interface WorkspaceGroupView {\n    readonly groupId: WorkspaceGroupId;\n    readonly title: string;\n}',
   },
   {
     name: 'WorkspaceInsertBeforeRequest',
@@ -11573,7 +11653,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceView',
-    declaration: 'export interface WorkspaceView {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n    readonly title: string;\n    readonly sessionIds: readonly SessionId[];\n    readonly createdAt: string;\n    readonly updatedAt: string;\n}',
+    declaration: 'export interface WorkspaceView {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n    readonly title: string;\n    readonly sessionIds: readonly SessionId[];\n    readonly createdAt: string;\n    readonly updatedAt: string;\n    readonly groupId?: WorkspaceGroupId;\n}',
   },
   {
     name: 'WorktreeCleanup',

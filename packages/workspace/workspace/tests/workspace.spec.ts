@@ -16,7 +16,9 @@ import type { SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persis
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import WorkspaceRegistry, {
   type WorkspaceId,
+  type WorkspaceGroupId,
   type workspaceDomainState,
+  WorkspaceGroupInvalidError,
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
 } from '../src/index.ts'
@@ -150,9 +152,10 @@ function record(path: string, sessionIds: string[], createdAt = '2026-07-24T00:0
 }
 
 /**
- * Media written before archivedSessionIds and pinnedSessionIds existed omit
- * the fields; keeping the fixtures in that shape continuously proves the
- * schema defaults upgrade them.
+ * Media stamped by the previous domain generation. Keeping the fixtures at v2
+ * continuously proves `compatibleVersions` admits them: fields written before
+ * archivedSessionIds, pinnedSessionIds, and workspaceGroups existed omit the
+ * fields, and the schema defaults upgrade them.
  */
 type StoredDomainState = z.input<typeof workspaceDomainState>
 
@@ -206,7 +209,13 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     await fiber.await()
     expect(ctx.workspaceRegistry.list()).toEqual([])
     expect(list).toHaveBeenCalledTimes(1)
-    expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(pool)).toEqual({
+      initialized: true,
+      workspaceIds: [],
+      archivedSessionIds: [],
+      pinnedSessionIds: [],
+      workspaceGroups: [],
+    })
   })
 
   it('bootstraps once from list headers only, in workspace/session createdAt order', async () => {
@@ -241,6 +250,7 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
       workspaceIds: result.registry.list().map(workspace => workspace.id),
       archivedSessionIds: [],
       pinnedSessionIds: [],
+      workspaceGroups: [],
     })
   })
 
@@ -269,7 +279,13 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     const second = await harness({ pool, sessions: [header('late', late, 100)] })
     expect(second.list).not.toHaveBeenCalled()
     expect(second.registry.list()).toEqual([])
-    expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(pool)).toEqual({
+      initialized: true,
+      workspaceIds: [],
+      archivedSessionIds: [],
+      pinnedSessionIds: [],
+      workspaceGroups: [],
+    })
   })
 
   it('reuses partial records after a bootstrap record write fails', async () => {
@@ -523,7 +539,13 @@ describe('WorkspaceRegistry create and lookup', () => {
     await expect(result.registry.delete(workspace.id)).resolves.toBe(false)
     expect(result.registry.get(workspace.id)).toBeUndefined()
     expect(result.registry.list()).toEqual([])
-    expect(storedState(result.pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(result.pool)).toEqual({
+      initialized: true,
+      workspaceIds: [],
+      archivedSessionIds: [],
+      pinnedSessionIds: [],
+      workspaceGroups: [],
+    })
     expect(result.pool.media.get('workspace')!.tables.get('workspaces')!.has(workspace.id)).toBe(false)
     await expect(realpath(dir)).resolves.toBe(dir)
     expect(result.list).toHaveBeenCalledTimes(1)
@@ -568,6 +590,7 @@ describe('WorkspaceRegistry create and lookup', () => {
       workspaceIds: [],
       archivedSessionIds: [],
       pinnedSessionIds: [],
+      workspaceGroups: [],
       pendingMutation: { operation: 'delete', workspaceId: workspace.id },
     })
     const reregistered = await first.registry.create(dir)
@@ -577,6 +600,7 @@ describe('WorkspaceRegistry create and lookup', () => {
       workspaceIds: [reregistered.id],
       archivedSessionIds: [],
       pinnedSessionIds: [],
+      workspaceGroups: [],
     })
     await first.fiber.dispose()
 
@@ -1017,7 +1041,13 @@ describe('header-validated membership projection', () => {
     const createRecovery = await harness({ pool: interruptedCreate })
     expect(createRecovery.registry.list()).toEqual([])
     expect(interruptedCreate.media.get('workspace')!.tables.get('workspaces')!.has(createId)).toBe(false)
-    expect(storedState(interruptedCreate)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(interruptedCreate)).toEqual({
+      initialized: true,
+      workspaceIds: [],
+      archivedSessionIds: [],
+      pinnedSessionIds: [],
+      workspaceGroups: [],
+    })
 
     const interruptedDelete = storedPool(
       [[deleteId, record(deleteDir, [])]],
@@ -1030,7 +1060,13 @@ describe('header-validated membership projection', () => {
     const deleteRecovery = await harness({ pool: interruptedDelete })
     expect(deleteRecovery.registry.list()).toEqual([])
     expect(interruptedDelete.media.get('workspace')!.tables.get('workspaces')!.has(deleteId)).toBe(false)
-    expect(storedState(interruptedDelete)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [], pinnedSessionIds: [] })
+    expect(storedState(interruptedDelete)).toEqual({
+      initialized: true,
+      workspaceIds: [],
+      archivedSessionIds: [],
+      pinnedSessionIds: [],
+      workspaceGroups: [],
+    })
 
     const corruptPending = storedPool(
       [[deleteId, record(deleteDir, [])]],
@@ -1600,5 +1636,133 @@ describe('archive follow-up lifecycle', () => {
       expect(storedState(result.pool).archivedSessionIds).toEqual(['cleanup-error'])
       expect(warning).toHaveBeenCalled()
     } finally { await result.ctx.fiber.dispose() }
+  })
+})
+
+describe('registry-global workspace groups', () => {
+  const groupId = (id: string): WorkspaceGroupId => brandString<WorkspaceGroupId>(id)
+
+  it('creates groups durably in append order and rejects blank titles without writing', async () => {
+    const { registry, pool, changes } = await harness()
+    const first = await registry.createGroup('First')
+    const second = await registry.createGroup('Second')
+    expect(registry.groups).toEqual([
+      { id: first.id, title: 'First' },
+      { id: second.id, title: 'Second' },
+    ])
+    expect(storedState(pool).workspaceGroups).toEqual(registry.groups)
+    const writes = changes.filter(change => change.table === '').length
+
+    await expect(registry.createGroup('  ')).rejects.toThrow(/non-blank/)
+    // Duplicate display titles are allowed across groups.
+    await expect(registry.createGroup('First')).resolves.toBeDefined()
+    expect(registry.groups).toHaveLength(3)
+    expect(changes.filter(change => change.table === '').length).toBe(writes + 1)
+  })
+
+  it('renames durably in place, rejects unknown ids, and skips same-title renames', async () => {
+    const { registry, pool, changes } = await harness()
+    const group = await registry.createGroup('Before')
+    await registry.createGroup('Untouched')
+
+    await registry.renameGroup(group.id, 'After')
+    expect(registry.groups.map(entry => entry.title)).toEqual(['After', 'Untouched'])
+    expect(storedState(pool).workspaceGroups.map(entry => entry.title)).toEqual(['After', 'Untouched'])
+    const writes = changes.filter(change => change.table === '').length
+
+    await registry.renameGroup(group.id, 'After')
+    expect(changes.filter(change => change.table === '').length).toBe(writes)
+    await expect(registry.renameGroup(groupId('missing'), 'Whatever'))
+      .rejects.toBeInstanceOf(WorkspaceGroupInvalidError)
+    expect(registry.groups.map(entry => entry.title)).toEqual(['After', 'Untouched'])
+  })
+
+  it('assigns and unassigns a workspace durably without touching registry order', async () => {
+    const dir = await makeDir('group-assign')
+    const secondDir = await makeDir('group-assign-second')
+    const { registry, pool, changes } = await harness()
+    const workspace = await registry.create(dir)
+    const other = await registry.create(secondDir)
+    const group = await registry.createGroup('Team')
+
+    await registry.setWorkspaceGroup(workspace.id, group.id)
+    expect(workspace.groupId).toBe(group.id)
+    expect(registry.get(workspace.id)!.groupId).toBe(group.id)
+    expect(other.groupId).toBeUndefined()
+    expect(storedRecord(pool, workspace.id).groupId).toBe(group.id)
+    expect(registry.list().map(item => item.id)).toEqual([other.id, workspace.id])
+    const writes = changes.length
+
+    await registry.setWorkspaceGroup(workspace.id, group.id)
+    await registry.setWorkspaceGroup(workspace.id, undefined)
+    expect(workspace.groupId).toBeUndefined()
+    expect(storedRecord(pool, workspace.id).groupId).toBeUndefined()
+    await expect(registry.setWorkspaceGroup(workspace.id, group.id)).resolves.toBeUndefined()
+    expect(workspace.groupId).toBe(group.id)
+    // One unassign write plus one re-assign write; the repeats wrote nothing.
+    expect(changes.length).toBe(writes + 2)
+  })
+
+  it('rejects assignments naming unknown workspaces or groups without writing', async () => {
+    const dir = await makeDir('group-assign-invalid')
+    const { registry, pool } = await harness()
+    const workspace = await registry.create(dir)
+    const group = await registry.createGroup('Team')
+
+    await expect(registry.setWorkspaceGroup(brandString<WorkspaceId>('missing-workspace'), group.id))
+      .rejects.toBeInstanceOf(WorkspaceOrderInvalidError)
+    await expect(registry.setWorkspaceGroup(workspace.id, groupId('missing-group')))
+      .rejects.toBeInstanceOf(WorkspaceGroupInvalidError)
+    expect(workspace.groupId).toBeUndefined()
+    expect(storedRecord(pool, workspace.id).groupId).toBeUndefined()
+  })
+
+  it('unassigns every member on group deletion and keeps the workspaces across restart', async () => {
+    const firstDir = await makeDir('group-delete-first')
+    const secondDir = await makeDir('group-delete-second')
+    const pool = new MemoryMediaPool()
+    const first = await harness({ pool })
+    const workspace = await first.registry.create(firstDir)
+    const memberless = await first.registry.create(secondDir)
+    const group = await first.registry.createGroup('Team')
+    await first.registry.setWorkspaceGroup(workspace.id, group.id)
+
+    await expect(first.registry.deleteGroup(group.id)).resolves.toBe(true)
+    await expect(first.registry.deleteGroup(group.id)).resolves.toBe(false)
+    expect(first.registry.groups).toEqual([])
+    expect(workspace.groupId).toBeUndefined()
+    expect(storedRecord(pool, workspace.id).groupId).toBeUndefined()
+    expect(first.registry.list().map(item => item.id)).toEqual([memberless.id, workspace.id])
+    await first.fiber.dispose()
+
+    const second = await harness({ pool })
+    expect(second.registry.groups).toEqual([])
+    expect(second.registry.list().map(item => item.id)).toEqual([memberless.id, workspace.id])
+    expect(second.registry.get(workspace.id)!.groupId).toBeUndefined()
+  })
+
+  it('keeps the group table and assignments across restarts', async () => {
+    const dir = await makeDir('group-restart')
+    const pool = new MemoryMediaPool()
+    const first = await harness({ pool })
+    const workspace = await first.registry.create(dir)
+    const group = await first.registry.createGroup('Team')
+    await first.registry.setWorkspaceGroup(workspace.id, group.id)
+    await first.fiber.dispose()
+
+    const second = await harness({ pool })
+    expect(second.registry.groups).toEqual([group])
+    expect(second.registry.get(workspace.id)!.groupId).toBe(group.id)
+    expect(storedRecord(pool, workspace.id).groupId).toBe(group.id)
+  })
+
+  it('fails loud when stored media references a missing group', async () => {
+    const dir = await makeDir('group-orphan')
+    const id = brandString<WorkspaceId>('00000000-0000-4000-8000-0000000000b1')
+    const pool = storedPool(
+      [[id, { ...record(dir, []), groupId: groupId('missing-group') }]],
+      { initialized: true, workspaceIds: [id] },
+    )
+    await expect(harness({ pool })).rejects.toThrow(/references missing group/)
   })
 })

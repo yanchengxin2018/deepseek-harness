@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type {
   SessionListState, SessionProjectionMap, SessionSummary,
 } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { WorkspaceGroupId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session-status/client'
 import type { SessionPendingInteraction } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -10,7 +10,8 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { SessionProjectionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   type ArchivedFilter,
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, sessionSearchIndex, owningGroupKey, owningParentFolder,
+  deriveFlat, deriveGroups, deriveSearchResults, deriveWorkspaceSections, orderByRecency, sessionSearchIndex,
+  owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, visibleSessionIds, workspaceLabel, UNGROUPED_KEY,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
@@ -1012,4 +1013,48 @@ it('leaves unnamed history titles empty for locale-owned row labels', () => {
   item.displayTitle = 'Default workspace'
   const sessions = list(item)
   expect(deriveFlat(sessions, [item.id], noRows, noAttention)[0]?.title).toBe('')
+})
+
+describe('deriveWorkspaceSections', () => {
+  const rowState = { archivedSessionIds: [], pinnedSessionIds: [], archivedFilter: 'default' as ArchivedFilter }
+  const statuses: SessionStatusSnapshot = new Map()
+  const view = (id: string, groupId?: string): WorkspaceView => ({
+    workspaceId: wid(id), path: `/projects/${id}`, title: id, sessionIds: [],
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    ...(groupId === undefined ? {} : { groupId: groupId as WorkspaceGroupId }),
+  })
+  const groupRow = (title: string, id: string) => ({ groupId: id as WorkspaceGroupId, title })
+  const groupsOf = (workspaces: readonly WorkspaceView[]) =>
+    deriveGroups(list(), workspaces, rowState, statuses, { expandedGroups: workspaces.map(w => w.workspaceId) })
+
+  it('buckets member workspaces per group in group-table order and keeps empty groups', () => {
+    const workspaces = [view('first', 'team'), view('loose'), view('second', 'team'), view('other', 'lab')]
+    const sections = deriveWorkspaceSections(
+      groupsOf(workspaces), workspaces,
+      [groupRow('Team', 'team'), groupRow('Empty', 'spare'), groupRow('Lab', 'lab')],
+      {},
+    )
+    expect(sections.map(section => [section.label, section.workspaces.map(w => w.label)])).toEqual([
+      ['Team', ['first', 'second']],
+      ['Empty', []],
+      ['Lab', ['other']],
+    ])
+    expect(sections.every(section => section.expanded)).toBe(true)
+  })
+
+  it('follows the persisted expansion record and reports the section holding the current session', () => {
+    const workspaces = [view('first', 'team'), view('loose')]
+    const sessions = withMain(list(summary('s1', 10)), sid('s1'))
+    const withMembers = workspaces.map(w => ({ ...w, sessionIds: w.workspaceId === wid('first') ? [sid('s1')] : [] }))
+    const derived = deriveGroups(sessions, withMembers, rowState, statuses, { expandedGroups: [wid('first')] })
+    const [section] = deriveWorkspaceSections(derived, withMembers, [groupRow('Team', 'team')], { team: false })
+    expect(section?.expanded).toBe(false)
+    expect(section?.containsCurrent).toBe(true)
+  })
+
+  it('keeps ungrouped workspaces out of every section', () => {
+    const workspaces = [view('loose')]
+    const sections = deriveWorkspaceSections(groupsOf(workspaces), workspaces, [], {})
+    expect(sections).toEqual([])
+  })
 })

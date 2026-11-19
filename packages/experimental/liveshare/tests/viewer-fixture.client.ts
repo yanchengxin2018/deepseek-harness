@@ -521,6 +521,14 @@ interface WorkspaceView {
   readonly sessionIds: readonly SessionId[]
   readonly createdAt: string
   readonly updatedAt: string
+  readonly groupId?: WorkspaceGroupId
+}
+
+type WorkspaceGroupId = string & { readonly __fixtureWorkspaceGroupId: 'WorkspaceGroupId' }
+
+interface WorkspaceGroupView {
+  readonly groupId: WorkspaceGroupId
+  readonly title: string
 }
 
 interface WorkspaceCreateRequest { readonly path: string }
@@ -550,6 +558,7 @@ type WorkspaceFollowFrame =
       readonly items: readonly WorkspaceView[]
       readonly archivedSessionIds: readonly SessionId[]
       readonly pinnedSessionIds: readonly SessionId[]
+      readonly groups: readonly WorkspaceGroupView[]
     }
   }
   | { readonly type: 'upsert'; readonly workspace: WorkspaceView }
@@ -557,6 +566,7 @@ type WorkspaceFollowFrame =
   | { readonly type: 'order'; readonly workspaceIds: readonly WorkspaceId[] }
   | { readonly type: 'archived'; readonly archivedSessionIds: readonly SessionId[] }
   | { readonly type: 'pinned'; readonly pinnedSessionIds: readonly SessionId[] }
+  | { readonly type: 'groups'; readonly groups: readonly WorkspaceGroupView[] }
 
 interface FixtureWorkspaceApi {
   create(request: WorkspaceCreateRequest): Promise<ConnectionRpcResult<WorkspaceCreateValue>>
@@ -2203,6 +2213,8 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
   const archivedSessionIds: SessionId[] = []
   // Registry-global pin set, most recently pinned first; this fixture never pins.
   const pinnedSessionIds: SessionId[] = []
+  // Registry-global group table in group-table order; this fixture never groups.
+  const workspaceGroups: WorkspaceGroupView[] = []
   const workspaceSnapshot = (workspace: FixtureWorkspace): WorkspaceView => ({
     ...workspace,
     sessionIds: [...workspace.sessionIds],
@@ -2213,6 +2225,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       items: workspaces.map(workspaceSnapshot),
       archivedSessionIds: [...archivedSessionIds],
       pinnedSessionIds: [...pinnedSessionIds],
+      groups: [...workspaceGroups],
     },
   })
 

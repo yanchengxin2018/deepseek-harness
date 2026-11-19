@@ -10,6 +10,11 @@ import type {
   WorkspaceDeleteRequest,
   WorkspaceDeleteValue,
   WorkspaceFollowFrame,
+  WorkspaceGroupAssignRequest,
+  WorkspaceGroupCreateRequest,
+  WorkspaceGroupDeleteRequest,
+  WorkspaceGroupRenameRequest,
+  WorkspaceGroupsValue,
   WorkspaceInsertBeforeRequest,
   WorkspaceInsertSessionBeforeRequest,
   WorkspaceOrderValue,
@@ -19,6 +24,8 @@ import type {
   WorkspaceUnarchiveSessionRequest,
   WorkspaceUnpinSessionRequest,
   WorkspaceValue,
+  WorkspaceGroupView,
+  WorkspaceGroupId,
   WorkspaceId,
   WorkspaceView,
 } from '../src/types.ts'
@@ -28,6 +35,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 const sid = (id: string): SessionId => id as SessionId
 const wid = (id: string): WorkspaceId => id as WorkspaceId
+const gid = (id: string): WorkspaceGroupId => id as WorkspaceGroupId
 
 function workspace(
   id: string,
@@ -102,6 +110,25 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
     _request: WorkspaceUnpinSessionRequest,
   ) => Promise<RemoteResult<WorkspacePinValue>> = () =>
     Promise.resolve(remoteOk({ pinnedSessionIds: [] }))
+  onCreateGroup: (
+    request: WorkspaceGroupCreateRequest,
+  ) => Promise<RemoteResult<WorkspaceGroupsValue>> = request =>
+    Promise.resolve(remoteOk({ groups: [{ groupId: gid(request.title), title: request.title }] }))
+  onRenameGroup: (
+    request: WorkspaceGroupRenameRequest,
+  ) => Promise<RemoteResult<WorkspaceGroupsValue>> = request =>
+    Promise.resolve(remoteOk({ groups: [{ groupId: request.groupId, title: request.title }] }))
+  onDeleteGroup: (
+    _request: WorkspaceGroupDeleteRequest,
+  ) => Promise<RemoteResult<WorkspaceGroupsValue>> = () =>
+    Promise.resolve(remoteOk({ groups: [] }))
+  onSetWorkspaceGroup: (
+    request: WorkspaceGroupAssignRequest,
+  ) => Promise<RemoteResult<WorkspaceValue>> = request => Promise.resolve(remoteOk({
+    workspace: request.groupId === undefined
+      ? workspace(String(request.workspaceId))
+      : { ...workspace(String(request.workspaceId)), groupId: request.groupId },
+  }))
 
   create(request: WorkspaceCreateRequest): Promise<RemoteResult<WorkspaceCreateValue>> {
     this.record('create', request)
@@ -148,6 +175,26 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
     return this.onUnpinSession(request)
   }
 
+  createGroup(request: WorkspaceGroupCreateRequest): Promise<RemoteResult<WorkspaceGroupsValue>> {
+    this.record('createGroup', request)
+    return this.onCreateGroup(request)
+  }
+
+  renameGroup(request: WorkspaceGroupRenameRequest): Promise<RemoteResult<WorkspaceGroupsValue>> {
+    this.record('renameGroup', request)
+    return this.onRenameGroup(request)
+  }
+
+  deleteGroup(request: WorkspaceGroupDeleteRequest): Promise<RemoteResult<WorkspaceGroupsValue>> {
+    this.record('deleteGroup', request)
+    return this.onDeleteGroup(request)
+  }
+
+  setWorkspaceGroup(request: WorkspaceGroupAssignRequest): Promise<RemoteResult<WorkspaceValue>> {
+    this.record('setWorkspaceGroup', request)
+    return this.onSetWorkspaceGroup(request)
+  }
+
   follow(_signal?: AbortSignal): RemoteStreamHandle<WorkspaceFollowFrame, never> {
     return streamHandle<WorkspaceFollowFrame>((async function* () {})())
   }
@@ -166,8 +213,9 @@ function baseline(
   items: readonly WorkspaceView[] = [],
   archivedSessionIds: readonly SessionId[] = [],
   pinnedSessionIds: readonly SessionId[] = [],
+  groups: readonly WorkspaceGroupView[] = [],
 ): void {
-  model.replaceBaseline({ items, archivedSessionIds, pinnedSessionIds })
+  model.replaceBaseline({ items, archivedSessionIds, pinnedSessionIds, groups })
 }
 
 describe('ClientWorkspaceModel', () => {
@@ -568,5 +616,51 @@ describe('ClientWorkspaceModel', () => {
     expect(model.getSnapshot().items).toEqual([])
     model.removeView(wid('gone'))
     expect(model.getSnapshot().items).toEqual([])
+  })
+
+  it('installs group tables from create/rename/delete echoes and supersedes stale replies', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    baseline(model)
+    await expect(model.createGroup({ title: 'Team' })).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().groups).toEqual([{ groupId: 'Team', title: 'Team' }])
+
+    // A reply that lands after a newer pushed set installs nothing.
+    const gate = deferred<RemoteResult<WorkspaceGroupsValue>>()
+    remote.onCreateGroup = () => gate.promise
+    const late = model.createGroup({ title: 'Late' })
+    model.replaceGroups([{ groupId: gid('pushed'), title: 'Pushed' }])
+    gate.resolve(remoteOk({ groups: [{ groupId: gid('stale'), title: 'Stale' }] }))
+    await expect(late).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().groups).toEqual([{ groupId: 'pushed', title: 'Pushed' }])
+
+    remote.onCreateGroup = request => Promise.resolve(remoteOk({ groups: [{ groupId: gid(request.title), title: request.title }] }))
+    await expect(model.renameGroup(gid('pushed'), 'Renamed')).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().groups).toEqual([{ groupId: 'pushed', title: 'Renamed' }])
+    await expect(model.deleteGroup(gid('pushed'))).resolves.toMatchObject({ ok: true })
+    expect(model.getSnapshot().groups).toEqual([])
+  })
+
+  it('merges a group assignment echo into the Workspace row', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    baseline(model, [workspace('one')])
+    await expect(model.setWorkspaceGroup(wid('one'), gid('team'))).resolves.toMatchObject({ ok: true })
+    expect(remote.calls).toContainEqual({
+      method: 'setWorkspaceGroup',
+      request: { workspaceId: 'one', groupId: 'team' },
+    })
+    expect(model.getSnapshot().items[0]!.groupId).toBe('team')
+    await expect(model.setWorkspaceGroup(wid('one'))).resolves.toMatchObject({ ok: true })
+    expect(remote.calls).toContainEqual({ method: 'setWorkspaceGroup', request: { workspaceId: 'one' } })
+    expect(model.getSnapshot().items[0]!.groupId).toBeUndefined()
+  })
+
+  it('carries the group table through reconnect baselines', () => {
+    const model = modelFor()
+    baseline(model, [workspace('one')], [], [], [{ groupId: gid('team'), title: 'Team' }])
+    expect(model.getSnapshot().groups).toEqual([{ groupId: 'team', title: 'Team' }])
+    baseline(model, [workspace('one')])
+    expect(model.getSnapshot().groups).toEqual([])
   })
 })

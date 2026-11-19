@@ -1,4 +1,4 @@
-import { IconEditOutlineRegular, IconTrashOutlineRegular, IconPinFillRegular, IconPinOutlineRegular, IconUnarchiveOutlineRegular, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCopyOutlineRegular, IconMailReadOutlineRegular, IconMailUnreadOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEditOutlineRegular, IconTrashOutlineRegular, IconPinFillRegular, IconPinOutlineRegular, IconUnarchiveOutlineRegular, IconArchiveOutlineRegular, IconBranchOutlineRegular, IconCopyOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular, IconMailReadOutlineRegular, IconMailUnreadOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SessionMenu } from './session-actions/SessionMenu.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-context-menu/client'
 /**
@@ -49,6 +49,7 @@ import {
   type SessionArchiveConfirmInjected, type SessionArchiveConfirmRequest,
   type RenameSessionInjected, type RowToast, type RowToastInjected, type RowToastState, type SessionRenameDialogInjected,
   type WorkspaceActionRequest, type SessionIdInjected, type WorkspaceBrowserInjected, type WorkspacePickerInjected,
+  type WorkspaceGroupActionRequest,
 } from './contract/slots.ts'
 import { createWorkspaceShortcutControls, installWorkspaceShortcuts } from './shortcuts.ts'
 import { UiWorkspaceService } from './navigation.ts'
@@ -70,6 +71,7 @@ export type {
   MenuOpenState, RowToast, SessionRenameTarget, SessionRowOwnerProps, UseMenuOpenState, WorkspaceBrowserInjected,
   SessionRowScheduleOwnerProps,
   WorkspaceBrowserProps,
+  WorkspaceGroupActionRequest,
   WorkspacePickerInjected, WorkspacePickerInput, WorkspacePickerProps,
 } from './contract/slots.ts'
 export type { WorkspaceKey } from './locales.ts'
@@ -327,6 +329,10 @@ export function apply(ctx: Context, config: SyncedConfig<WorkspaceNavigationConf
     if (workspace === undefined || !ctx.remoteAccess.source('workspace', workspaceId, `workspace/${action}`).getSnapshot()) return
     workspaceActionRequest.set({ action, workspaceId, displayTitle, storedTitle: workspace.title })
   }
+  const groupActionRequest = createSnapshotStore<WorkspaceGroupActionRequest | null>(null)
+  const requestGroupAction = (request: WorkspaceGroupActionRequest): void => {
+    groupActionRequest.set(request)
+  }
   ctx.slots.inject('contextMenu.icon', function* () {
     for (const [key, Icon] of Object.entries({
       'workspace.rename': IconEditOutlineRegular, 'workspace.delete': IconTrashOutlineRegular,
@@ -334,6 +340,7 @@ export function apply(ctx: Context, config: SyncedConfig<WorkspaceNavigationConf
       'workspace.archive': IconArchiveOutlineRegular, 'workspace.unarchive': IconUnarchiveOutlineRegular,
       'workspace.fork': IconBranchOutlineRegular, 'workspace.copy': IconCopyOutlineRegular,
       'workspace.markRead': IconMailReadOutlineRegular, 'workspace.markUnread': IconMailUnreadOutlineRegular,
+      'workspace.moveToGroup': IconFolderCloseRegular, 'workspace.removeFromGroup': IconFolderOpenRegular,
     })) yield ctx.slots.register({ name: 'contextMenu.icon', key }, Icon)
   })
   ctx.effect(() => ctx.contextMenus.register({
@@ -342,13 +349,64 @@ export function apply(ctx: Context, config: SyncedConfig<WorkspaceNavigationConf
       ? [{ id: 'rename', label: ctx.locale.bind(NS)('rename'), icon: { key: 'workspace.rename' }, run: () => { requestWorkspaceAction(workspaceId, displayTitle, 'rename') } }] : [],
   }), 'workspace: rename menu action')
   ctx.effect(() => ctx.contextMenus.register({
+    id: 'workspace.moveToGroup', target: 'workspace', order: 200,
+    resolve: ({ workspaceId }) => {
+      if (!ctx.remoteAccess.source('workspace', workspaceId, 'workspace/setWorkspaceGroup').getSnapshot()) return []
+      const t = ctx.locale.bind(NS)
+      const snapshot = workspaces.list.getSnapshot()
+      const current = snapshot.items.find(row => row.workspaceId === workspaceId)?.groupId
+      return [{
+        id: 'moveToGroup',
+        label: t('group.moveTo'),
+        icon: { key: 'workspace.moveToGroup' },
+        children: [
+          ...snapshot.groups.map(group => ({
+            id: `group:${group.groupId}`,
+            label: group.title,
+            ...(current === group.groupId ? {} : { run: () => {
+              workspaces.setWorkspaceGroup(workspaceId, group.groupId).catch((reason: unknown) => {
+                console.warn('workspace group assignment rejected:', reason)
+              })
+            } }),
+          })),
+          {
+            id: 'ungroup', label: t('group.remove'), icon: { key: 'workspace.removeFromGroup' },
+            separatorBefore: true,
+            ...(current === undefined ? {} : { run: () => {
+              workspaces.setWorkspaceGroup(workspaceId).catch((reason: unknown) => {
+                console.warn('workspace group assignment rejected:', reason)
+              })
+            } }),
+          },
+          { id: 'newGroup', label: t('group.new'), run: () => { requestGroupAction({ action: 'create', displayTitle: '' }) } },
+        ],
+      }]
+    },
+  }), 'workspace: move-to-group menu action')
+  ctx.effect(() => ctx.contextMenus.register({
     id: 'workspace.delete', target: 'workspace', order: 300,
     resolve: ({ workspaceId, displayTitle }) => ctx.remoteAccess.source('workspace', workspaceId, 'workspace/delete').getSnapshot()
       ? [{ id: 'delete', label: ctx.locale.bind(NS)('delete.workspace'), icon: { key: 'workspace.delete' }, danger: true, separatorBefore: true,
         run: () => { requestWorkspaceAction(workspaceId, displayTitle, 'delete') } }] : [],
   }), 'workspace: delete menu action')
+  ctx.effect(() => ctx.contextMenus.register({
+    id: 'workspace-group.rename', target: 'workspace-group', order: 100,
+    resolve: ({ groupId, displayTitle }) => [{
+      id: 'rename', label: ctx.locale.bind(NS)('rename'), icon: { key: 'workspace.rename' },
+      run: () => { requestGroupAction({ action: 'rename', groupId, displayTitle }) },
+    }],
+  }), 'workspace-group: rename menu action')
+  ctx.effect(() => ctx.contextMenus.register({
+    id: 'workspace-group.delete', target: 'workspace-group', order: 300,
+    resolve: ({ groupId, displayTitle }) => [{
+      id: 'delete', label: ctx.locale.bind(NS)('group.delete'), icon: { key: 'workspace.delete' },
+      danger: true, separatorBefore: true,
+      run: () => { requestGroupAction({ action: 'delete', groupId, displayTitle }) },
+    }],
+  }), 'workspace-group: delete menu action')
   const browserInjected = (): WorkspaceBrowserInjected => ({
     settleWorkspaceAction: () => { workspaceActionRequest.set(null) },
+    settleGroupAction: () => { groupActionRequest.set(null) },
     // Explicit group actions keep their target; unscoped New Session inherits
     // the current Session Workspace before the recent-Workspace fallback.
     startSession: (workspaceId, options) => { uiWorkspace.startSession(workspaceId, options) },
@@ -362,14 +420,26 @@ export function apply(ctx: Context, config: SyncedConfig<WorkspaceNavigationConf
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
+    createGroup: async (title) => { return await workspaces.createGroup(title) },
+    renameGroup: async (groupId, title) => { return await workspaces.renameGroup(groupId, title) },
+    deleteGroup: async (groupId) => { return await workspaces.deleteGroup(groupId) },
+    setWorkspaceGroup: async (workspaceId, groupId) => { await workspaces.setWorkspaceGroup(workspaceId, groupId) },
+    requestGroupAction,
     unarchiveSession: async (sessionId) => { await uiWorkspace.unarchiveSession(sessionId) },
     createWorkspace: input => workspaces.create(input),
     requestSearch: shortcutControls.search,
     requestAddWorkspace: shortcutControls.add,
     closeAddWorkspace: shortcutControls.closeAdd,
     setDirectoryBusy: shortcutControls.directoryBusy,
-    hooks: { workspaceActionRequest, contextMenuTarget: ctx.contextMenus.active, directoryFlow: browserFlowSource, hostInfo,
-      workspaceShortcuts: shortcutControls.state, shortcuts: ctx.shortcuts.catalog },
+    hooks: {
+      workspaceActionRequest,
+      groupActionRequest,
+      contextMenuTarget: ctx.contextMenus.active,
+      directoryFlow: browserFlowSource,
+      hostInfo,
+      workspaceShortcuts: shortcutControls.state,
+      shortcuts: ctx.shortcuts.catalog,
+    },
   })
   const pickerInjected = (directoryFlow: HostObservable<boolean>) => (): WorkspacePickerInjected => ({
     createWorkspace: input => workspaces.create(input),

@@ -3,8 +3,8 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { RemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
-import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
-import type { WorkspaceView } from '../types.ts'
+import type { WorkspaceGroupId, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import type { WorkspaceGroupView, WorkspaceView } from '../types.ts'
 import type { ClientWorkspaceModel, WorkspaceSnapshot } from './model.ts'
 
 /** Structured create failure for callers that distinguish Host business errors. */
@@ -45,7 +45,7 @@ export interface WorkspaceSource {
 
 /** Workspace Controller's Client service face. */
 export interface IWorkspaces {
-  /** Host-authoritative Workspace rows, order, archive set, and follow lifecycle. */
+  /** Host-authoritative Workspace rows, order, archive set, group table, and follow lifecycle. */
   readonly list: WorkspaceSource
   /**
    * Register an existing path as a Workspace.
@@ -112,6 +112,32 @@ export interface IWorkspaces {
     sessionId: SessionId,
     beforeSessionId?: SessionId,
   ): Promise<WorkspaceView>
+  /**
+   * Create a Workspace group.
+   * @param title - Display title; non-blank, duplicates allowed.
+   * @returns the complete resulting group table in group-table order.
+   */
+  createGroup(title: string): Promise<readonly WorkspaceGroupView[]>
+  /**
+   * Rename a Workspace group.
+   * @param groupId - target group.
+   * @param title - new display title; non-blank, duplicates allowed.
+   * @returns the complete resulting group table in group-table order.
+   */
+  renameGroup(groupId: WorkspaceGroupId, title: string): Promise<readonly WorkspaceGroupView[]>
+  /**
+   * Delete a Workspace group; its members become ungrouped, never deleted.
+   * @param groupId - target group.
+   * @returns the complete resulting group table in group-table order.
+   */
+  deleteGroup(groupId: WorkspaceGroupId): Promise<readonly WorkspaceGroupView[]>
+  /**
+   * Assign a Workspace to a group, or unassign it.
+   * @param workspaceId - target Workspace.
+   * @param groupId - group to join, or undefined to unassign.
+   * @returns the updated Workspace.
+   */
+  setWorkspaceGroup(workspaceId: WorkspaceId, groupId?: WorkspaceGroupId): Promise<WorkspaceView>
 }
 
 /** Owns the bare Workspace snapshot and Workspace-only commands. */
@@ -182,6 +208,30 @@ export class WorkspaceController extends Service implements IWorkspaces {
   ): Promise<WorkspaceView> {
     const result = await this.model.insertSessionBefore(workspaceId, sessionId, beforeSessionId)
     if (!result.ok) throw commandError('move', result.error)
+    return result.value.workspace
+  }
+
+  async createGroup(title: string): Promise<readonly WorkspaceGroupView[]> {
+    const result = await this.model.createGroup({ title })
+    if (!result.ok) throw commandError('group create', result.error)
+    return result.value.groups
+  }
+
+  async renameGroup(groupId: WorkspaceGroupId, title: string): Promise<readonly WorkspaceGroupView[]> {
+    const result = await this.model.renameGroup(groupId, title)
+    if (!result.ok) throw commandError('group rename', result.error)
+    return result.value.groups
+  }
+
+  async deleteGroup(groupId: WorkspaceGroupId): Promise<readonly WorkspaceGroupView[]> {
+    const result = await this.model.deleteGroup(groupId)
+    if (!result.ok) throw commandError('group delete', result.error)
+    return result.value.groups
+  }
+
+  async setWorkspaceGroup(workspaceId: WorkspaceId, groupId?: WorkspaceGroupId): Promise<WorkspaceView> {
+    const result = await this.model.setWorkspaceGroup(workspaceId, groupId)
+    if (!result.ok) throw commandError('group assign', result.error)
     return result.value.workspace
   }
 }

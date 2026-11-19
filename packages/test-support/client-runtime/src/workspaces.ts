@@ -1,7 +1,7 @@
 /** Test-owned workspaces face: the renderer standard-kit observable plus recorded actions. */
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type {
-  IWorkspaces, WorkspaceId, WorkspaceSnapshot, WorkspaceView,
+  IWorkspaces, WorkspaceGroupView, WorkspaceGroupId, WorkspaceId, WorkspaceSnapshot, WorkspaceView,
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -206,5 +206,86 @@ export class TestWorkspaces implements IWorkspaces {
     await this.update((draft) => {
       draft.pinnedSessionIds = draft.pinnedSessionIds.filter(id => id !== sessionId)
     })
+  }
+
+  /**
+   * Create a workspace group (recorded). The default mirrors the production
+   * face's observable effect: the group joins the list state's group table.
+   * @param title - group title.
+   * @returns the complete resulting group table.
+   */
+  async createGroup(title: string): Promise<readonly WorkspaceGroupView[]> {
+    this.calls.push({ method: 'createGroup', args: [title] })
+    const stub = this.stubs.get('createGroup')
+    if (stub !== undefined) return await (stub(title) as Promise<readonly WorkspaceGroupView[]>)
+    const groupId = `group-${title}` as WorkspaceGroupId
+    await this.update((draft) => {
+      draft.groups = [...draft.groups, { groupId, title }]
+    })
+    return this.list.getSnapshot().groups
+  }
+
+  /**
+   * Rename a workspace group (recorded). The default mirrors the production
+   * face's observable effect: the group row's title updates in place.
+   * @param groupId - target group.
+   * @param title - new title.
+   * @returns the complete resulting group table.
+   */
+  async renameGroup(groupId: WorkspaceGroupId, title: string): Promise<readonly WorkspaceGroupView[]> {
+    this.calls.push({ method: 'renameGroup', args: [groupId, title] })
+    const stub = this.stubs.get('renameGroup')
+    if (stub !== undefined) return await (stub(groupId, title) as Promise<readonly WorkspaceGroupView[]>)
+    await this.update((draft) => {
+      draft.groups = draft.groups.map(group => group.groupId === groupId ? { ...group, title } : group)
+    })
+    return this.list.getSnapshot().groups
+  }
+
+  /**
+   * Delete a workspace group (recorded). The default mirrors the production
+   * face's observable effect: the group row leaves the table and its members
+   * become ungrouped.
+   * @param groupId - target group.
+   * @returns the complete resulting group table.
+   */
+  async deleteGroup(groupId: WorkspaceGroupId): Promise<readonly WorkspaceGroupView[]> {
+    this.calls.push({ method: 'deleteGroup', args: [groupId] })
+    const stub = this.stubs.get('deleteGroup')
+    if (stub !== undefined) return await (stub(groupId) as Promise<readonly WorkspaceGroupView[]>)
+    await this.update((draft) => {
+      draft.groups = draft.groups.filter(group => group.groupId !== groupId)
+      draft.items = draft.items.map((item) => {
+        if (item.groupId !== groupId) return item
+        const { groupId: _dropped, ...rest } = item
+        return rest
+      })
+    })
+    return this.list.getSnapshot().groups
+  }
+
+  /**
+   * Assign a workspace to a group (recorded). The default mirrors the
+   * production face's observable effect: the row's `groupId` updates.
+   * @param workspaceId - target workspace.
+   * @param groupId - group to join, or undefined to unassign.
+   * @returns the updated view.
+   */
+  async setWorkspaceGroup(workspaceId: WorkspaceId, groupId?: WorkspaceGroupId): Promise<WorkspaceView> {
+    this.calls.push({ method: 'setWorkspaceGroup', args: [workspaceId, groupId] })
+    const stub = this.stubs.get('setWorkspaceGroup')
+    if (stub !== undefined) return await (stub(workspaceId, groupId) as Promise<WorkspaceView>)
+    await this.update((draft) => {
+      draft.items = draft.items.map(item => item.workspaceId === workspaceId
+        ? (groupId === undefined
+          ? (({ groupId: _dropped, ...rest }) => rest)(item)
+          : { ...item, groupId })
+        : item)
+    })
+    const updated = this.list.getSnapshot().items.find(item => item.workspaceId === workspaceId)
+    if (updated === undefined) {
+      throw new Error(`test fixture lost workspace '${workspaceId}' after its group update`)
+    }
+    return updated
   }
 }

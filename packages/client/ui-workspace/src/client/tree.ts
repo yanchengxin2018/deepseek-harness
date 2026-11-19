@@ -6,7 +6,9 @@
 import {
   type SessionListState, type SessionSearchResultItem, type SessionSummary,
 } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {
+  WorkspaceGroupView, WorkspaceId, WorkspaceView,
+} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {
   SessionStatusSnapshot,
 } from '@deepseek-ai/dsh-client-ui-session-status/client'
@@ -88,9 +90,72 @@ export interface GroupNode {
   sessions: readonly SessionNode[]
 }
 
+/**
+ * One user-defined workspace section rendered in the browser: a named bucket
+ * over the durable workspace order. Membership is per-workspace
+ * (`WorkspaceView.groupId`); the group-table order is the sections' display
+ * order. Ungrouped workspaces are never wrapped — they render as ordinary
+ * top-level workspace rows.
+ */
+export interface WorkspaceSectionNode {
+  /** Section key: the backing WorkspaceGroupId as a string (an expansion-store key). */
+  key: string
+  /** Backing WorkspaceGroupId. */
+  groupId: WorkspaceGroupView['groupId']
+  /** User-visible title. */
+  label: string
+  /** Whether the section's workspace rows are visible. */
+  expanded: boolean
+  /** The section contains the selected session's workspace. */
+  containsCurrent: boolean
+  /** Member workspace groups in registry order, including empty ones as drag targets. */
+  workspaces: readonly GroupNode[]
+}
+
+/**
+ * Bucket workspace groups into user-defined sections in group-table order.
+ * Workspaces without a group are omitted (they stay top-level); sections keep
+ * every group row even with no members, so a folded section never hides its
+ * drop target.
+ * @param groups - derived workspace group nodes in registry order.
+ * @param workspaces - authoritative workspace rows carrying `groupId`.
+ * @param groupViews - group-table rows in group-table order.
+ * @param expandedSections - persisted expansion keyed by group id; absent keys read expanded.
+ * @returns one section per group row, in group-table order.
+ */
+export function deriveWorkspaceSections(
+  groups: readonly GroupNode[],
+  workspaces: readonly WorkspaceView[],
+  groupViews: readonly WorkspaceGroupView[],
+  expandedSections: Readonly<Record<string, boolean>>,
+): WorkspaceSectionNode[] {
+  const sectionOfWorkspace = new Map(
+    workspaces.map(workspace => [workspace.workspaceId as string, workspace.groupId]),
+  )
+  const bySection = new Map<string, GroupNode[]>()
+  for (const group of groups) {
+    const section = sectionOfWorkspace.get(group.key)
+    if (section === undefined) continue
+    const bucket = bySection.get(section)
+    if (bucket === undefined) bySection.set(section, [group])
+    else bucket.push(group)
+  }
+  return groupViews.map((view) => {
+    const key = view.groupId as string
+    const members = bySection.get(key) ?? []
+    return {
+      key,
+      groupId: view.groupId,
+      label: view.title,
+      expanded: expandedSections[key] ?? true,
+      containsCurrent: members.some(member => member.containsCurrent),
+      workspaces: members,
+    }
+  })
+}
+
 /** One flat search row combining list metadata with an optional content match. */
-export interface SearchResultNode {
-  id: SessionId
+export interface SearchResultNode {  id: SessionId
   title: string
   workspace: string
   /** A Session-scoped UI consumer is awaiting this user. */

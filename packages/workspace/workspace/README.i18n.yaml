@@ -33,8 +33,11 @@
   en: 5a68da22516a6a3c
   zh: a229d57acdab882c
 /deepseek-ai-dsh-workspace/use-this-package/hiding-and-restoring-sessions-and-removing-projects:
-  en: 7b298aa5c48501d4
-  zh: 8ffeec728c1c13fe
+  en: 6d35672e18e7ee74
+  zh: 3be8ea871953df1b
+/deepseek-ai-dsh-workspace/use-this-package/grouping-projects-into-named-groups:
+  en: 925fae94f39ca067
+  zh: c4ebf2d4fe002706
 /deepseek-ai-dsh-workspace/understand-the-implementation:
   en: 447ced401b3b14a8
   zh: 3ce2105605223945
@@ -42,14 +45,14 @@
   en: 9e06dc2424613790
   zh: 806bf45f13ebcc72
 /deepseek-ai-dsh-workspace/understand-the-implementation/api-behavior:
-  en: 8fcd81ee32f3c01e
-  zh: 08ac92d085bb8147
+  en: 58ccb25daf4ef18c
+  zh: 572e4bb2045a3ca7
 /deepseek-ai-dsh-workspace/understand-the-implementation/source-map:
   en: 6899c50041c3d1ef
   zh: ea70fda89cc50465
 /deepseek-ai-dsh-workspace/understand-the-implementation/durable-shape:
-  en: 056a266f4a15b29d
-  zh: e1589f5750662887
+  en: 1119c293f92a05d2
+  zh: 8d6e5ce73559fb06
 /deepseek-ai-dsh-workspace/understand-the-implementation/lifecycle:
   en: e41db10d48acbf9a
   zh: 457d329fe37ba33c

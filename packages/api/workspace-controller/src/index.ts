@@ -18,6 +18,11 @@ import type {
   WorkspaceDeleteRequest,
   WorkspaceDeleteValue,
   WorkspaceFollowFrame,
+  WorkspaceGroupAssignRequest,
+  WorkspaceGroupCreateRequest,
+  WorkspaceGroupDeleteRequest,
+  WorkspaceGroupRenameRequest,
+  WorkspaceGroupsValue,
   WorkspaceId,
   WorkspaceInsertBeforeRequest,
   WorkspaceInsertSessionBeforeRequest,
@@ -192,6 +197,46 @@ export class WorkspaceController extends TypertRemoteService {
   }
 
   /**
+   * Create one Workspace group.
+   * @param request - group title.
+   * @returns the complete resulting group table in group-table order.
+   */
+  @Remote('createGroup')
+  createGroup(request: WorkspaceGroupCreateRequest): Promise<WorkspaceGroupsValue> {
+    return this.commands.createGroup(request)
+  }
+
+  /**
+   * Rename one Workspace group.
+   * @param request - group identity and proposed title.
+   * @returns the complete resulting group table in group-table order.
+   */
+  @Remote('renameGroup')
+  renameGroup(request: WorkspaceGroupRenameRequest): Promise<WorkspaceGroupsValue> {
+    return this.commands.renameGroup(request)
+  }
+
+  /**
+   * Delete one Workspace group; its members become ungrouped, never deleted.
+   * @param request - group identity to remove.
+   * @returns the complete resulting group table in group-table order.
+   */
+  @Remote('deleteGroup')
+  deleteGroup(request: WorkspaceGroupDeleteRequest): Promise<WorkspaceGroupsValue> {
+    return this.commands.deleteGroup(request)
+  }
+
+  /**
+   * Assign one Workspace to a Workspace group, or unassign it.
+   * @param request - Workspace identity plus the group to join, or none to unassign.
+   * @returns the updated Workspace projection.
+   */
+  @Remote('setWorkspaceGroup')
+  setWorkspaceGroup(request: WorkspaceGroupAssignRequest): Promise<WorkspaceValue> {
+    return this.commands.setWorkspaceGroup(request)
+  }
+
+  /**
    * Stream a complete Workspace baseline followed by ordered increments. A
    * non-owner receives only the Workspaces and Sessions `allows()` admits.
    * When a delivered Workspace is no longer admitted at its next change or
@@ -219,6 +264,7 @@ export class WorkspaceController extends TypertRemoteService {
         items: items.map(item => ({ ...item, sessionIds: sessions(item.sessionIds) })),
         archivedSessionIds: sessions(value.archivedSessionIds),
         pinnedSessionIds: sessions(value.pinnedSessionIds),
+        groups: value.groups,
       }
     }
     for await (const frame of this.feed.follow(signal)) {
@@ -251,6 +297,10 @@ export class WorkspaceController extends TypertRemoteService {
           break
         case 'pinned':
           yield { type: 'pinned', pinnedSessionIds: sessions(frame.pinnedSessionIds) }
+          break
+        case 'groups':
+          // Group rows carry no Session identities, so access filtering does not apply.
+          yield frame
           break
         /* v8 ignore next -- closed follow-frame union. */
         default:

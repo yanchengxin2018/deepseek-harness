@@ -23,7 +23,7 @@ import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import { abbreviateHomePath } from '@deepseek-ai/dsh-util-workspace-path'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
-import type { GroupNode, SearchResultNode, SessionNode } from '../tree.ts'
+import type { GroupNode, SearchResultNode, SessionNode, WorkspaceSectionNode } from '../tree.ts'
 import css from './Rows.module.css'
 
 /** Sidebar-owned layout values needed by row copies mounted outside the sidebar. */
@@ -171,6 +171,59 @@ export function ProjectRowItem(props: ProjectRowItemProps) {
 /** The ungrouped bucket's header: no backing Workspace to start a Session in or reorder. */
 function UngroupedProjectRow(props: ProjectRowItemProps) {
   return <ProjectRow {...props} actions={{ reorder: false }} />
+}
+
+/** Owner props of one Workspace group section header row. */
+export type WorkspaceSectionRowProps = {
+  section: WorkspaceSectionNode
+  onToggle: () => void
+  t: RowTranslate
+} & Pick<WorkspaceBrowserProps, 'renderFactorySlot' | 'useContextMenuTarget' | 'useContextMenu'>
+
+/**
+ * Workspace group section header: folder + title; the click toggles the
+ * section, the shared ellipsis button and right-click open the group menu
+ * (rename/delete). The enclosing section owns the workspace-assignment drop;
+ * the row itself is not a drag source.
+ * @param props.section - derived section node.
+ * @param props.onToggle - expand/collapse the section.
+ * @param props.t - the browser root's locale seat.
+ * @returns the row element.
+ */
+export function WorkspaceSectionRow({
+  section, onToggle, t, renderFactorySlot, useContextMenuTarget, useContextMenu,
+}: WorkspaceSectionRowProps) {
+  const { getTriggerProps } = useContextMenu()
+  const menuOpen = useContextMenuTarget(
+    target => target?.kind === 'workspace-group' && target.value.groupId === section.groupId,
+  )
+  return (
+    <div
+      className={clsx(css.projectRow, menuOpen && css.menuOpen)}
+      data-row-key={`section:${section.key}`}
+      role="treeitem"
+      aria-expanded={section.expanded}
+      onClick={onToggle}
+      {...getTriggerProps({ kind: 'workspace-group', value: { groupId: section.groupId, displayTitle: section.label } })}
+    >
+      <span className={clsx(css.slot, css.folder, section.containsCurrent && css.folderActive)}>
+        {section.expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
+      </span>
+      <span className={clsx(css.slot, css.chevron)}>
+        <IconTriangleRightFillRegular className={clsx(css.arrow, section.expanded && css.arrowOpen)} />
+      </span>
+      <span className={css.projectText}>
+        <span className={css.title}>{section.label}</span>
+      </span>
+      <span className={css.rowActions}>
+        {renderFactorySlot('contextMenu.button', {
+          target: { kind: 'workspace-group', value: { groupId: section.groupId, displayTitle: section.label } },
+          label: t('actions.group.aria', { name: section.label }),
+          className: css.iconButton,
+        })}
+      </span>
+    </div>
+  )
 }
 
 /** A real Workspace's header: every action asks that Workspace's resource. */

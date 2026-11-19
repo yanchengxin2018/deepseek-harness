@@ -124,6 +124,7 @@ async function mount(options: {
     workspaceIds: workspaces.map(([id]) => WorkspaceId(id)),
     archivedSessionIds: (options.archived ?? []).map(SessionId),
     pinnedSessionIds: [],
+    workspaceGroups: [],
   })
   await workspaceDomain.close()
   const cacheDomain = await ctx.storageDomain.open(projectionCacheDomainSpec)

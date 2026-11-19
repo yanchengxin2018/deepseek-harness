@@ -16,7 +16,8 @@
  */
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { WorkspaceDialogs } from './WorkspaceDialogs.tsx'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import { WorkspaceDialogs, WorkspaceGroupDialogs } from './WorkspaceDialogs.tsx'
 import {
   AnimatedRows, HoverCardGroup, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
   IconChevronsUpDownOutlineRegular, IconClockOutlineRegular, IconCloseFillRegular,
@@ -27,17 +28,22 @@ import {
 import type {
   SessionListState, SessionSearchResultItem,
 } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {
+  WorkspaceGroupView, WorkspaceGroupId, WorkspaceId, WorkspaceView,
+} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { workspaceDisplayTitle } from '@deepseek-ai/dsh-api-workspace-controller/default-workspace'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
-import type { ArchivedFilter, GroupNode, SessionNode, SessionOrderBy, SessionRowState } from '../tree.ts'
+import type {
+  ArchivedFilter, GroupNode, SessionNode, SessionOrderBy, SessionRowState, WorkspaceSectionNode,
+} from '../tree.ts'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, sessionSearchIndex, owningGroupKey, owningParentFolder,
+  deriveFlat, deriveGroups, deriveSearchResults, deriveWorkspaceSections, orderByRecency, sessionSearchIndex,
+  owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
 } from '../tree.ts'
-import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
+import { ProjectRowItem, SearchResultItem, SessionNodeItem, WorkspaceSectionRow } from './Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
@@ -139,13 +145,14 @@ function useNativeDragAcceptance(active: boolean): void {
 }
 
 /** Grouping, ordering, and archived-filter menu; own open state so it resets with the wide chrome. */
-function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrderPick, onArchivedFilterPick, t }: {
+function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrderPick, onArchivedFilterPick, onCreateGroupPick, t }: {
   groupBy: SessionGroupBy
   orderBy: SessionOrderBy
   archivedFilter: ArchivedFilter
   onGroupPick: (mode: SessionGroupBy) => void
   onOrderPick: (mode: SessionOrderBy) => void
   onArchivedFilterPick: (filter: ArchivedFilter) => void
+  onCreateGroupPick: () => void
   t: WorkspaceBrowserProps['t']
 }) {
   const [open, setOpen] = useState(false)
@@ -158,6 +165,8 @@ function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrde
         { id: 'workspace', label: t('groupBy.workspace'), icon: <IconFolderCloseRegular /> },
         { id: 'workspace-tree', label: t('groupBy.workspaceTree'), icon: <IconWorkspaceTreeOutlineRegular /> },
         { id: 'flat', label: t('groupBy.flat'), icon: <IconFlatListOutlineRegular /> },
+        { type: 'separator' as const, id: 'new-group-separator' },
+        { id: 'new-group', label: t('group.new') },
         { type: 'separator' as const, id: 'order-by-separator' },
         { type: 'label' as const, id: 'order-by', text: t('orderBy.label') },
         { id: 'manual', label: t('orderBy.manual'), icon: <IconChevronsUpDownOutlineRegular /> },
@@ -179,6 +188,7 @@ function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrde
         else if (id === 'hide-archived') onArchivedFilterPick('default')
         else if (id === 'show-archived') onArchivedFilterPick('show')
         else if (id === 'only-archived') onArchivedFilterPick('only')
+        else if (id === 'new-group') onCreateGroupPick()
         setOpen(false)
       }}
       align="end"
@@ -241,7 +251,11 @@ function sessionDragOrder(
 /** In-flight Workspace-row drag: source identity plus the current marker. */
 interface WorkspaceDragState {
   workspaceId: WorkspaceId
-  over: { id: WorkspaceId; half: 'before' | 'after' } | null
+  /**
+   * Marker target: a Workspace id with the insert half, or a section key
+   * (`group:<groupId>` half `'member'`) assigning the dragged Workspace to it.
+   */
+  over: { id: string; half: 'before' | 'after' | 'member' } | null
 }
 
 /** Resolve an insertion side across the Workspace header, descendants, and Sessions. */
@@ -253,7 +267,7 @@ function workspaceGroupHalf(e: { clientY: number; currentTarget: HTMLElement }):
 type SessionTreeProps = Pick<
   WorkspaceBrowserProps,
   'useSessionStatus' | 'startSession' | 'open' | 'renderFactorySlot' | 'useContextMenuTarget' | 'useContextMenu'
-  | 'insertWorkspaceBefore' | 't' | 'usePanelInfo'
+  | 'insertWorkspaceBefore' | 'setWorkspaceGroup' | 't' | 'usePanelInfo'
   | 'useSessionAccess' | 'useWorkspaceAccess'
 > & PropsRenderSlots<
   | 'sidebar.workspaces.session.row.action'
@@ -276,6 +290,8 @@ type SessionTreeProps = Pick<
   animationResetKey: string
   /** Nest Workspaces under their nearest registered ancestors. */
   nestWorkspaces: boolean
+  /** Host Workspace group table in group-table order; empty hides every section. */
+  groupViews: readonly WorkspaceGroupView[]
   /** Explicit persisted group expansion, including descendants in tree mode. */
   groupExpansion: Readonly<Record<string, boolean>>
   /** Persist one Workspace group's expansion. */
@@ -317,8 +333,8 @@ function SessionTree({
   workspaceReady, animationResetKey, usePanelInfo, useSessionAccess, useWorkspaceAccess,
   onSessionRenameRequest,
   renderSlot, renderFactorySlot, useContextMenuTarget, useContextMenu,
-  insertWorkspaceBefore,
-  nestWorkspaces, groupExpansion, setGroupExpanded,
+  insertWorkspaceBefore, setWorkspaceGroup,
+  nestWorkspaces, groupViews, groupExpansion, setGroupExpanded,
   setSessionOrder, home, t,
   revealSessionId, onSessionRevealed, shortcuts,
 }: SessionTreeProps) {
@@ -375,6 +391,16 @@ function SessionTree({
       ungroupedOrder: ungroupedSessionIds,
     }),
     [list, workspaces, rowState, statuses, expandedGroups, ungroupedSessionIds],
+  )
+  // Sections bucket the derived workspace groups by user group membership.
+  // Only the plain grouped view shows them; the tree view nests by path and
+  // the flat list has no workspace rows to bucket.
+  const sectioned = !nestWorkspaces && groupViews.length > 0
+  const groupIdOfWorkspace = useCallback((workspaceId: WorkspaceId): WorkspaceGroupId | undefined =>
+    workspaces.find(workspace => workspace.workspaceId === workspaceId)?.groupId, [workspaces])
+  const workspaceSections = useMemo<readonly WorkspaceSectionNode[]>(
+    () => sectioned ? deriveWorkspaceSections(groups, workspaces, groupViews, groupExpansion) : [],
+    [sectioned, groups, workspaces, groupViews, groupExpansion],
   )
   useEffect(() => {
     for (let key = revealGroup; key !== undefined; key = parents.get(key)) {
@@ -434,11 +460,25 @@ function SessionTree({
     if (workspaceDropCommitted.current) return
     workspaceDropCommitted.current = true
     setWorkspaceDrag(null)
-    const owner = parents.get(activeDrag.workspaceId)
-    const siblings = workspaces.filter(workspace => parents.get(workspace.workspaceId) === owner)
+    if (over.half === 'member') {
+      // The ungrouped bucket's drop target is the empty key: an unassignment.
+      const groupId = over.id === UNGROUPED_KEY ? undefined : brandString<WorkspaceGroupId>(over.id)
+      if (groupIdOfWorkspace(activeDrag.workspaceId) === groupId) return
+      setWorkspaceGroup(activeDrag.workspaceId, groupId).catch((reason: unknown) => {
+        console.warn('workspace group assignment rejected:', reason)
+      })
+      return
+    }
+    // Reorder within the dragged workspace's own bucket (its user group in the
+    // sectioned view, or its parent subtree in the tree view).
+    const siblings = sectioned
+      ? workspaces.filter(workspace => groupIdOfWorkspace(workspace.workspaceId) === groupIdOfWorkspace(activeDrag.workspaceId))
+      : workspaces.filter(workspace => parents.get(workspace.workspaceId) === parents.get(activeDrag.workspaceId))
     const rowIndex = siblings.findIndex(workspace => workspace.workspaceId === over.id)
     if (rowIndex === -1) return
-    const anchor = over.half === 'before' ? over.id : siblings[rowIndex + 1]?.workspaceId
+    const anchor = over.half === 'before'
+      ? brandString<WorkspaceId>(over.id)
+      : siblings[rowIndex + 1]?.workspaceId
     if (anchor === activeDrag.workspaceId) return
     const sourceIndex = siblings.findIndex(workspace => workspace.workspaceId === activeDrag.workspaceId)
     const anchorIndex = anchor === undefined
@@ -472,7 +512,10 @@ function SessionTree({
   const renderGroup = (group: GroupNode, depth: number): ReactNode => {
     const workspaceId = group.workspaceId
     const children = childrenByParent.get(group.key) ?? []
-    const compatibleDrag = workspaceDrag !== null && parents.get(workspaceDrag.workspaceId) === parents.get(group.key)
+    const compatibleDrag = workspaceDrag !== null && (sectioned
+      ? groupIdOfWorkspace(workspaceDrag.workspaceId)
+        === (group.workspaceId === undefined ? undefined : groupIdOfWorkspace(group.workspaceId))
+      : parents.get(workspaceDrag.workspaceId) === parents.get(group.key))
     const watermark = sessionWatermarks[group.key] ?? SESSION_WATERMARK_BASE
     const collapsed = watermarkRows(group.sessions, baselines.get(group.key) ?? SESSION_WATERMARK_BASE)
     const visible = watermarkRows(group.sessions, watermark)
@@ -522,6 +565,9 @@ function SessionTree({
           css.groupSection,
           workspaceMarker === 'before' && css.workspaceDropBefore,
           workspaceMarker === 'after' && css.workspaceDropAfter,
+          sectioned && (workspaceId === undefined || groupIdOfWorkspace(workspaceId) === undefined)
+            && workspaceDrag?.over?.id === UNGROUPED_KEY && workspaceDrag.over.half === 'member'
+            && css.workspaceSectionDrop,
         )}
         onDragOver={workspaceDrag === null
           ? undefined
@@ -529,13 +575,24 @@ function SessionTree({
             e.preventDefault()
             if (hoverWorkspace === undefined && parents.get(group.key) !== undefined) return
             e.stopPropagation()
-            if (hoverWorkspace === undefined) {
-              e.dataTransfer.dropEffect = 'none'
-              if (workspaceDrag.over !== null) setWorkspaceDrag({ ...workspaceDrag, over: null })
-            } else {
+            if (hoverWorkspace !== undefined) {
               e.dataTransfer.dropEffect = 'move'
               hoverWorkspace(workspaceGroupHalf(e))
+              return
             }
+            // In the sectioned view, the ungrouped bucket (the loose-session
+            // account and ungrouped Workspace rows) is an unassign drop target
+            // for a grouped workspace; elsewhere the drop is refused.
+            if (sectioned && groupIdOfWorkspace(workspaceDrag.workspaceId) !== undefined
+              && (workspaceId === undefined || groupIdOfWorkspace(workspaceId) === undefined)) {
+              e.dataTransfer.dropEffect = 'move'
+              if (workspaceDrag.over?.id !== UNGROUPED_KEY || workspaceDrag.over.half !== 'member') {
+                setWorkspaceDrag({ ...workspaceDrag, over: { id: UNGROUPED_KEY, half: 'member' } })
+              }
+              return
+            }
+            e.dataTransfer.dropEffect = 'none'
+            if (workspaceDrag.over !== null) setWorkspaceDrag({ ...workspaceDrag, over: null })
           }}
         onDrop={workspaceDrag === null
           ? undefined
@@ -543,12 +600,17 @@ function SessionTree({
             e.preventDefault()
             if (dropWorkspace === undefined && parents.get(group.key) !== undefined) return
             e.stopPropagation()
-            if (dropWorkspace === undefined) {
-              workspaceDropCommitted.current = true
-              setWorkspaceDrag(null)
-            } else {
+            if (dropWorkspace !== undefined) {
               dropWorkspace(workspaceGroupHalf(e))
+              return
             }
+            if (sectioned && groupIdOfWorkspace(workspaceDrag.workspaceId) !== undefined
+              && (workspaceId === undefined || groupIdOfWorkspace(workspaceId) === undefined)) {
+              commitWorkspaceDrag(workspaceDrag, { id: UNGROUPED_KEY, half: 'member' })
+              return
+            }
+            workspaceDropCommitted.current = true
+            setWorkspaceDrag(null)
           }}
       >
         <ProjectRowItem
@@ -653,7 +715,53 @@ function SessionTree({
     )
   }
 
-  const groupRows = rootGroups.map(group => renderGroup(group, 0))
+  const renderSection = (section: WorkspaceSectionNode): ReactNode => {
+    rowKeys.push(`section:${section.key}`)
+    const dropActive = workspaceDrag?.over !== null && workspaceDrag?.over !== undefined
+      && workspaceDrag.over.id === section.key && workspaceDrag.over.half === 'member'
+    return (
+      <div
+        key={section.key}
+        style={{ '--dsh-workspace-indent': '0px' } as CSSProperties}
+        className={clsx(css.groupSection, css.workspaceSection, dropActive && css.workspaceSectionDrop)}
+        onDragOver={workspaceDrag === null
+          ? undefined
+          : (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            e.dataTransfer.dropEffect = 'move'
+            if (workspaceDrag.over?.id !== section.key || workspaceDrag.over.half !== 'member') {
+              setWorkspaceDrag({ ...workspaceDrag, over: { id: section.key, half: 'member' } })
+            }
+          }}
+        onDrop={workspaceDrag === null
+          ? undefined
+          : (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            commitWorkspaceDrag(workspaceDrag, { id: section.key, half: 'member' })
+          }}
+      >
+        <WorkspaceSectionRow
+          section={section}
+          renderFactorySlot={renderFactorySlot} useContextMenu={useContextMenu} useContextMenuTarget={useContextMenuTarget}
+          onToggle={() => {
+            setGroupExpanded(section.key, !section.expanded)
+          }}
+          t={t}
+        />
+        {section.expanded && section.workspaces.map(child => renderGroup(child, 1))}
+      </div>
+    )
+  }
+
+  const topGroups = sectioned
+    ? groups.filter(group => groupIdOfWorkspace(group.workspaceId as WorkspaceId) === undefined)
+    : rootGroups
+  const groupRows = [
+    ...topGroups.map(group => renderGroup(group, 0)),
+    ...workspaceSections.map(renderSection),
+  ]
   return (
     <HoverCardGroup className={clsx(css.treeBody, css.wide)}>
       {workspaceDropAtListStart && <span className={css.listTopDropIndicator} aria-hidden="true" />}
@@ -922,6 +1030,8 @@ export function WorkspaceBrowser({
   renameWorkspace, useWorkspaceActionRequest, settleWorkspaceAction,
   deleteWorkspace,
   insertWorkspaceBefore,
+  createGroup, renameGroup, deleteGroup, setWorkspaceGroup,
+  requestGroupAction, useGroupActionRequest, settleGroupAction,
   unarchiveSession,
   createWorkspace,
   searchSessions,
@@ -959,6 +1069,8 @@ export function WorkspaceBrowser({
   const workspaceStreamState = useWorkspaces(state => state.state)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
   const pinnedSessionIds = useWorkspaces(state => state.pinnedSessionIds)
+  const groupViews = useWorkspaces(state => state.groups)
+  const groupActionRequest = useGroupActionRequest(value => value)
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -1040,8 +1152,11 @@ export function WorkspaceBrowser({
       UNGROUPED_KEY,
       FLAT_SESSION_ORDER_KEY,
       ...workspaces.map(workspace => workspace.workspaceId),
+      // Section expansion lives in the same record; group ids are not
+      // Workspace identities, so they survive the pruning by being named.
+      ...groupViews.map(view => view.groupId as string),
     ])
-  }, [actions.retainAccountKeys, workspacePhase, workspaces])
+  }, [actions.retainAccountKeys, workspacePhase, workspaces, groupViews])
   useEffect(() => {
     if (list.phase !== 'ready' || workspaceReady || orderBy !== 'manual' || currentBlank === undefined) return
     // A first prompt can end blank pinning before the Workspace baseline arrives.
@@ -1302,6 +1417,7 @@ export function WorkspaceBrowser({
               onGroupPick={actions.setGroupBy}
               onOrderPick={(mode) => { actions.setOrderBy(mode, activeSessionOrders) }}
               onArchivedFilterPick={actions.setArchivedFilter}
+              onCreateGroupPick={() => { requestGroupAction({ action: 'create', displayTitle: '' }) }}
               t={t}
             />
           )}
@@ -1424,6 +1540,7 @@ export function WorkspaceBrowser({
                 workspaceReady={workspaceReady}
                 nestWorkspaces={groupBy === 'workspace-tree'}
                 animationResetKey={`${groupBy}/${orderBy}/${archivedFilter}`}
+                groupViews={groupViews}
                 groupExpansion={groupExpansion}
                 setGroupExpanded={actions.setGroupExpanded}
                 setSessionOrder={saveSessionOrder}
@@ -1432,6 +1549,7 @@ export function WorkspaceBrowser({
                 startSession={startSession}
                 open={guardedOpen}
                 insertWorkspaceBefore={insertWorkspaceBefore}
+                setWorkspaceGroup={setWorkspaceGroup}
                 revealSessionId={revealSessionId}
                 onSessionRevealed={acknowledgeSessionReveal}
                 home={home}
@@ -1443,6 +1561,9 @@ export function WorkspaceBrowser({
       {workspaceActionRequest !== null && <WorkspaceDialogs key={`${workspaceActionRequest.action}/${workspaceActionRequest.workspaceId}`}
         request={workspaceActionRequest} workspaces={workspaces} renameWorkspace={renameWorkspace} deleteWorkspace={deleteWorkspace}
         settleWorkspaceAction={settleWorkspaceAction} t={t} />}
+      {groupActionRequest !== null && <WorkspaceGroupDialogs key={`${groupActionRequest.action}/${groupActionRequest.groupId ?? 'new'}`}
+        request={groupActionRequest} createGroup={createGroup} renameGroup={renameGroup} deleteGroup={deleteGroup}
+        settleGroupAction={settleGroupAction} t={t} />}
     </div>
   )
 }

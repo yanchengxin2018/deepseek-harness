@@ -6,9 +6,9 @@
  */
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SessionActivity, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import type { SessionActivity, WorkspaceGroupId, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 
-export type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+export type { WorkspaceGroupId, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 export type {
   SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap,
 } from '@deepseek-ai/dsh-workspace/types'
@@ -27,6 +27,15 @@ export interface WorkspaceView {
   readonly createdAt: string
   /** ISO-8601 last-mutation instant. */
   readonly updatedAt: string
+  /** Workspace group this Workspace belongs to; absent when ungrouped. */
+  readonly groupId?: WorkspaceGroupId
+}
+
+/** One Workspace group projected for browser consumers; order comes from the baseline/frame list. */
+export interface WorkspaceGroupView {
+  readonly groupId: WorkspaceGroupId
+  /** User-visible title. */
+  readonly title: string
 }
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -50,6 +59,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       readonly sessionId: SessionId
       readonly beforeSessionId?: SessionId
     }
+    /** The named Workspace group is not in the durable group table. */
+    'workspace/group-not-found': { readonly groupId: WorkspaceGroupId }
     /** The verb needs an interaction the composed backend does not serve. */
     'directory-picker/unavailable': { readonly capability: string }
     /** The target is not fully qualified, or the backend cannot list it. */
@@ -149,12 +160,43 @@ export interface WorkspacePinValue {
   readonly pinnedSessionIds: readonly SessionId[]
 }
 
+/** Workspace group creation. */
+export interface WorkspaceGroupCreateRequest {
+  /** Display title; any non-blank string, duplicates allowed. */
+  readonly title: string
+}
+
+/** Workspace group title mutation. */
+export interface WorkspaceGroupRenameRequest {
+  readonly groupId: WorkspaceGroupId
+  /** Display title; any non-blank string, duplicates allowed. */
+  readonly title: string
+}
+
+/** Workspace group deletion. Members become ungrouped, never deleted. */
+export interface WorkspaceGroupDeleteRequest {
+  readonly groupId: WorkspaceGroupId
+}
+
+/** Workspace group membership mutation; the omitted `groupId` unassigns. */
+export interface WorkspaceGroupAssignRequest {
+  readonly workspaceId: WorkspaceId
+  readonly groupId?: WorkspaceGroupId
+}
+
+/** Complete Workspace group table after a mutation, in group-table order. */
+export interface WorkspaceGroupsValue {
+  readonly groups: readonly WorkspaceGroupView[]
+}
+
 /** Complete reconnect baseline for Workspace browser state. */
 export interface WorkspaceBaseline {
   readonly items: readonly WorkspaceView[]
   readonly archivedSessionIds: readonly SessionId[]
   /** Registry-global pin set, most recently pinned first. */
   readonly pinnedSessionIds: readonly SessionId[]
+  /** Registry-global group table in group-table order. */
+  readonly groups: readonly WorkspaceGroupView[]
 }
 
 /**
@@ -169,6 +211,7 @@ export type WorkspaceFollowIncrement =
   | { readonly type: 'order'; readonly workspaceIds: readonly WorkspaceId[] }
   | { readonly type: 'archived'; readonly archivedSessionIds: readonly SessionId[] }
   | { readonly type: 'pinned'; readonly pinnedSessionIds: readonly SessionId[] }
+  | { readonly type: 'groups'; readonly groups: readonly WorkspaceGroupView[] }
 
 /** Workspace state stream; every generation starts with exactly one baseline. */
 export type WorkspaceFollowFrame =

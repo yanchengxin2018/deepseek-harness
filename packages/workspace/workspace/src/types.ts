@@ -15,6 +15,12 @@ import type { TypertResource } from '@deepseek-ai/dsh-typert-protocol'
  */
 export type WorkspaceId = Branded<'WorkspaceId'>
 
+/**
+ * Identifies one workspace group. A generated uuid, never the title: renames
+ * must not invalidate reference anchors.
+ */
+export type WorkspaceGroupId = Branded<'WorkspaceGroupId'>
+
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertResourceMap {
     /** One Workspace; the Workspace Controller registers its default `workspaceId` wire field. */
@@ -60,6 +66,18 @@ export interface SessionActivity {
 }
 
 /**
+ * One named workspace group: a display bucket over the registry order.
+ * Membership is per-workspace (`Workspace.groupId`); the group list order is
+ * the groups' own display order. Groups never affect session accounting.
+ */
+export interface WorkspaceGroup {
+  /** Stable group id (generated uuid). */
+  readonly id: WorkspaceGroupId
+  /** Display title; duplicates across groups are allowed. */
+  readonly title: string
+}
+
+/**
  * One workspace: a stable id over an existing directory, a display title, and
  * an ordered candidate account of sessions. Membership validates header cwd
  * against the workspace path, but preserves an existing account when its
@@ -100,6 +118,13 @@ export interface Workspace {
   readonly sessionIds: readonly SessionId[]
 
   /**
+   * Group this workspace belongs to, or undefined when ungrouped. Membership
+   * is display metadata only: it never affects the registry order, session
+   * accounting, or the directory.
+   */
+  readonly groupId: WorkspaceGroupId | undefined
+
+  /**
    * List the stored headers of the current members.
    * @returns a new array with one header per entry of {@link sessionIds}, in the same order.
    */
@@ -111,6 +136,15 @@ export interface Workspace {
    * @returns resolution after durability.
    */
   setTitle(title: string): Promise<void>
+
+  /**
+   * Assign this workspace to a group durably, or remove it from every group.
+   * Idempotent: the current assignment resolving to the same value writes
+   * nothing. The caller must name an existing group; the registry validates.
+   * @param groupId - The group to join, or undefined to unassign.
+   * @returns resolution after durability.
+   */
+  setGroup(groupId: WorkspaceGroupId | undefined): Promise<void>
 
   /**
    * Prepend a session to this workspace's candidate account. An already

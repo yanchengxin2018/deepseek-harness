@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-11-19-workspace-groups-as-order-overlay.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-19-workspace-groups-as-order-overlay.md
+/agent-note-workspace-groups-as-an-overlay-over-the-registry-order:
+  en: c0e8c0a08140f587
+  zh: 6050d5afd3b2b70d
+/agent-note-workspace-groups-as-an-overlay-over-the-registry-order/problem:
+  en: 50dabf4aa8a07692
+  zh: 49976b84d12c5020
+/agent-note-workspace-groups-as-an-overlay-over-the-registry-order/decision:
+  en: bcb356583f2cd3bc
+  zh: d2295ce9b185747d
+/agent-note-workspace-groups-as-an-overlay-over-the-registry-order/alternatives-considered:
+  en: 5bd7404a2271f8f8
+  zh: 888c0bb3de6d1615
+/agent-note-workspace-groups-as-an-overlay-over-the-registry-order/consequences:
+  en: c7aeb991f798f5c8
+  zh: 9abec0ba0ef9fd12

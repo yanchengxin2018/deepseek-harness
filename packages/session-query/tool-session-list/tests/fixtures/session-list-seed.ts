@@ -57,6 +57,7 @@ export async function apply(ctx: Context): Promise<void> {
       workspaceIds: [workspaceId, emptyId],
       archivedSessionIds: [SessionId('list-archived')],
       pinnedSessionIds: [],
+      workspaceGroups: [],
     })
   } finally {
     await domain.close()

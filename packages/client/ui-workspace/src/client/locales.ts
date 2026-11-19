@@ -134,6 +134,17 @@ export const zh = {
   'time.months': '{n}个月',
   'time.years': '{n}年',
   'time.ago': '{t}前',
+  'group.new': '新建分组',
+  'group.moveTo': '移动到分组',
+  'group.remove': '移出分组',
+  'group.create': '创建',
+  'group.create.title': '新建分组',
+  'group.rename.title': '重命名分组',
+  'group.delete': '删除分组',
+  'group.delete.desc': '将把“{name}”从分组列表中移除，组内工作区回到列表顶层。文件夹与会话不受影响。',
+  'group.pending': '正在删除分组…',
+  'field.groupName': '分组名称',
+  'actions.group.aria': '分组“{name}”的操作',
 } satisfies Record<string, string>
 
 /** The workspace namespace key union. */
@@ -269,6 +280,17 @@ export const en = {
   'time.months': '{n}mo',
   'time.years': '{n}y',
   'time.ago': '{t} ago',
+  'group.new': 'New group',
+  'group.moveTo': 'Move to group',
+  'group.remove': 'Remove from group',
+  'group.create': 'Create',
+  'group.create.title': 'New group',
+  'group.rename.title': 'Rename group',
+  'group.delete': 'Delete group',
+  'group.delete.desc': 'This removes “{name}” from the group list and its workspaces return to the top level. Folders and sessions are unaffected.',
+  'group.pending': 'Deleting group…',
+  'field.groupName': 'Group name',
+  'actions.group.aria': 'Group actions for {name}',
 } satisfies Record<WorkspaceKey, string>
 
 /** Japanese copy, checked against the English keys. */
@@ -401,6 +423,17 @@ export const ja = {
   'time.months': '{n}か月',
   'time.years': '{n}年',
   'time.ago': '{t}前',
+  'group.new': '新規グループ',
+  'group.moveTo': 'グループへ移動',
+  'group.remove': 'グループから外す',
+  'group.create': '作成',
+  'group.create.title': '新規グループ',
+  'group.rename.title': 'グループ名を変更',
+  'group.delete': 'グループを削除',
+  'group.delete.desc': '「{name}」をグループ一覧から削除し、グループ内のワークスペースは一覧の先頭レベルに戻ります。フォルダとセッションには影響しません。',
+  'group.pending': 'グループを削除中…',
+  'field.groupName': 'グループ名',
+  'actions.group.aria': '{name} のグループ操作',
 } satisfies Record<keyof typeof en, string>
 
 /** Spanish dictionary, checked against the English keys. */
@@ -533,6 +566,17 @@ export const es = {
   'time.months': '{n}mo',
   'time.years': '{n}y',
   'time.ago': 'Hace {t}',
+  'group.new': 'Nuevo grupo',
+  'group.moveTo': 'Mover a grupo',
+  'group.remove': 'Quitar del grupo',
+  'group.create': 'Crear',
+  'group.create.title': 'Nuevo grupo',
+  'group.rename.title': 'Renombrar grupo',
+  'group.delete': 'Eliminar grupo',
+  'group.delete.desc': 'Esto elimina "{name}" de la lista de grupos y sus espacios de trabajo vuelven al nivel superior. Las carpetas y las sesiones no se ven afectadas.',
+  'group.pending': 'Eliminando grupo…',
+  'field.groupName': 'Nombre del grupo',
+  'actions.group.aria': 'Acciones del grupo para {name}',
 } satisfies Record<keyof typeof en, string>
 
 /** French dictionary, checked against the English keys. */
@@ -665,6 +709,17 @@ export const fr = {
   'time.months': '{n}mo',
   'time.years': '{n}y',
   'time.ago': 'Il y a {t}',
+  'group.new': 'Nouveau groupe',
+  'group.moveTo': 'Déplacer vers le groupe',
+  'group.remove': 'Retirer du groupe',
+  'group.create': 'Créer',
+  'group.create.title': 'Nouveau groupe',
+  'group.rename.title': 'Renommer le groupe',
+  'group.delete': 'Supprimer le groupe',
+  'group.delete.desc': 'Cela supprime « {name} » de la liste des groupes et ses espaces de travail reviennent au niveau supérieur. Les dossiers et les sessions ne sont pas affectés.',
+  'group.pending': 'Suppression du groupe…',
+  'field.groupName': 'Nom du groupe',
+  'actions.group.aria': 'Actions du groupe pour {name}',
 } satisfies Record<keyof typeof en, string>
 
 /** German dictionary, checked against the English keys. */
@@ -797,6 +852,17 @@ export const de = {
   'time.months': '{n}mo',
   'time.years': '{n}y',
   'time.ago': 'Vor {t}',
+  'group.new': 'Neue Gruppe',
+  'group.moveTo': 'In Gruppe verschieben',
+  'group.remove': 'Aus Gruppe entfernen',
+  'group.create': 'Erstellen',
+  'group.create.title': 'Neue Gruppe',
+  'group.rename.title': 'Gruppe umbenennen',
+  'group.delete': 'Gruppe löschen',
+  'group.delete.desc': 'Dadurch wird „{name}“ aus der Gruppenliste entfernt und ihre Arbeitsbereiche kehren auf die oberste Ebene zurück. Ordner und Sitzungen bleiben unberührt.',
+  'group.pending': 'Gruppe wird gelöscht…',
+  'field.groupName': 'Gruppenname',
+  'actions.group.aria': 'Gruppenaktionen für {name}',
 } satisfies Record<keyof typeof en, string>
 
 /** Russian dictionary, checked against the English keys. */
@@ -929,6 +995,17 @@ export const ru = {
   'time.months': '{n}mo',
   'time.years': '{n}y',
   'time.ago': '{t} назад',
+  'group.new': 'Новая группа',
+  'group.moveTo': 'Переместить в группу',
+  'group.remove': 'Убрать из группы',
+  'group.create': 'Создать',
+  'group.create.title': 'Новая группа',
+  'group.rename.title': 'Переименовать группу',
+  'group.delete': 'Удалить группу',
+  'group.delete.desc': 'Это удалит «{name}» из списка групп, а её рабочие области вернутся на верхний уровень. Папки и сеансы не затрагиваются.',
+  'group.pending': 'Удаление группы…',
+  'field.groupName': 'Название группы',
+  'actions.group.aria': 'Действия группы для {name}',
 } satisfies Record<keyof typeof en, string>
 
 /** Portuguese dictionary, checked against the English keys. */
@@ -1061,4 +1138,15 @@ export const pt = {
   'time.months': '{n} mês',
   'time.years': '{n}s',
   'time.ago': '{t} atrás',
+  'group.new': 'Novo grupo',
+  'group.moveTo': 'Mover para grupo',
+  'group.remove': 'Remover do grupo',
+  'group.create': 'Criar',
+  'group.create.title': 'Novo grupo',
+  'group.rename.title': 'Renomear grupo',
+  'group.delete': 'Excluir grupo',
+  'group.delete.desc': 'Isso remove "{name}" da lista de grupos e seus espaços de trabalho voltam ao nível superior. Pastas e sessões não são afetadas.',
+  'group.pending': 'Excluindo grupo…',
+  'field.groupName': 'Nome do grupo',
+  'actions.group.aria': 'Ações do grupo para {name}',
 } satisfies Record<keyof typeof en, string>

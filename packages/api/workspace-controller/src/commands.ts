@@ -2,17 +2,18 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import type { WorkspaceGroupId, WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import {
   WorkspaceActiveSessionError,
   WorkspaceArchivedSessionPinError,
+  WorkspaceGroupInvalidError,
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
   WorkspaceUnknownSessionError,
 } from '@deepseek-ai/dsh-workspace'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { workspaceView } from './feed.ts'
+import { workspaceGroupView, workspaceView } from './feed.ts'
 import type {
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
@@ -20,6 +21,11 @@ import type {
   WorkspaceCreateValue,
   WorkspaceDeleteRequest,
   WorkspaceDeleteValue,
+  WorkspaceGroupAssignRequest,
+  WorkspaceGroupCreateRequest,
+  WorkspaceGroupDeleteRequest,
+  WorkspaceGroupRenameRequest,
+  WorkspaceGroupsValue,
   WorkspaceInsertBeforeRequest,
   WorkspaceInsertSessionBeforeRequest,
   WorkspaceOrderValue,
@@ -227,6 +233,77 @@ export class WorkspaceCommands {
     return { pinnedSessionIds: [...this.ctx.workspaceRegistry.pinnedSessionIds] }
   }
 
+  /**
+   * Create one Workspace group and return the complete resulting group table.
+   * @param request - group title.
+   * @returns the complete resulting group table in group-table order.
+   */
+  createGroup(request: WorkspaceGroupCreateRequest): Promise<WorkspaceGroupsValue> {
+    const title = request.title.trim()
+    if (title === '') {
+      return Promise.reject(new RemoteError('gateway/bad-request', 'Workspace group create requires a non-blank title', {}))
+    }
+    return this.enqueue(async () => {
+      await this.ctx.workspaceRegistry.createGroup(title)
+      return { groups: [...this.ctx.workspaceRegistry.groups].map(workspaceGroupView) }
+    })
+  }
+
+  /**
+   * Rename one Workspace group and return the complete resulting group table.
+   * @param request - group identity and proposed title.
+   * @returns the complete resulting group table in group-table order.
+   */
+  async renameGroup(request: WorkspaceGroupRenameRequest): Promise<WorkspaceGroupsValue> {
+    const title = request.title.trim()
+    if (title === '') {
+      return Promise.reject(new RemoteError('gateway/bad-request', 'Workspace group rename requires a non-blank title', {}))
+    }
+    return this.enqueue(async () => {
+      try {
+        await this.ctx.workspaceRegistry.renameGroup(brandString<WorkspaceGroupId>(request.groupId), title)
+      } catch (error) {
+        if (!(error instanceof WorkspaceGroupInvalidError)) throw error
+        throw groupNotFound(error.groupId)
+      }
+      return { groups: [...this.ctx.workspaceRegistry.groups].map(workspaceGroupView) }
+    })
+  }
+
+  /**
+   * Delete one Workspace group; its members become ungrouped, never deleted.
+   * @param request - group identity to remove.
+   * @returns the complete resulting group table in group-table order.
+   */
+  async deleteGroup(request: WorkspaceGroupDeleteRequest): Promise<WorkspaceGroupsValue> {
+    return this.enqueue(async () => {
+      const deleted = await this.ctx.workspaceRegistry.deleteGroup(brandString<WorkspaceGroupId>(request.groupId))
+      if (!deleted) throw groupNotFound(brandString<WorkspaceGroupId>(request.groupId))
+      return { groups: [...this.ctx.workspaceRegistry.groups].map(workspaceGroupView) }
+    })
+  }
+
+  /**
+   * Assign one Workspace to a Workspace group, or unassign it.
+   * @param request - Workspace identity plus the group to join, or none to unassign.
+   * @returns the updated Workspace projection.
+   */
+  async setWorkspaceGroup(request: WorkspaceGroupAssignRequest): Promise<WorkspaceValue> {
+    return this.enqueue(async () => {
+      const workspace = this.requireWorkspace(request.workspaceId)
+      try {
+        await this.ctx.workspaceRegistry.setWorkspaceGroup(
+          workspace.id,
+          request.groupId === undefined ? undefined : brandString<WorkspaceGroupId>(request.groupId),
+        )
+      } catch (error) {
+        if (!(error instanceof WorkspaceGroupInvalidError)) throw error
+        throw groupNotFound(error.groupId)
+      }
+      return { workspace: workspaceView(workspace) }
+    })
+  }
+
   private requireWorkspace(workspaceId: WorkspaceId): Workspace {
     const workspace = this.ctx.workspaceRegistry.get(brandString<WorkspaceId>(workspaceId))
     if (workspace === undefined) throw workspaceNotFound(workspaceId)
@@ -245,6 +322,14 @@ function workspaceNotFound(workspaceId: WorkspaceId): RemoteError<'workspace/not
     'workspace/not-found',
     `Workspace "${workspaceId}" not found`,
     { workspaceId },
+  )
+}
+
+function groupNotFound(groupId: WorkspaceGroupId): RemoteError<'workspace/group-not-found'> {
+  return new RemoteError(
+    'workspace/group-not-found',
+    `Workspace group "${groupId}" not found`,
+    { groupId },
   )
 }
 

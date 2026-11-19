@@ -49,7 +49,9 @@ import type { EmptyWorkspaceOwnerProps } from '@deepseek-ai/dsh-client-ui-conver
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { SessionSearchResultItem } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { RemoteHostFacts } from '@deepseek-ai/dsh-api-remotes/client'
-import type { SessionActivity, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {
+  SessionActivity, WorkspaceGroupView, WorkspaceGroupId, WorkspaceId, WorkspaceView,
+} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
 import type { WorkspaceShortcutState } from '../shortcuts.ts'
@@ -61,7 +63,18 @@ declare module '@deepseek-ai/dsh-client-ui-context-menu/client' {
   interface ContextMenuTargetMap {
     /** Registered Workspace header; path and title belong to the clicked row. */
     workspace: { readonly workspaceId: WorkspaceId; readonly path: string; readonly displayTitle: string }
+    /** Registered Workspace group section header; the title belongs to the clicked row. */
+    'workspace-group': { readonly groupId: WorkspaceGroupId; readonly displayTitle: string }
   }
+}
+
+/** One request for the group create, rename, or delete dialog. */
+export type WorkspaceGroupActionRequest = {
+  readonly action: 'create' | 'rename' | 'delete'
+  /** Target group; absent for `create`. */
+  readonly groupId?: WorkspaceGroupId
+  /** Title the dialog seeds its draft from, or the row's current title for delete. */
+  readonly displayTitle: string
 }
 
 /** One request for the existing Workspace rename or delete dialog. */
@@ -273,8 +286,12 @@ export type DirectoryPickingHooks = PropsHooks<DirectoryPickingInjected['hooks']
 export type WorkspaceBrowserInjected = {
   /** Dismiss the settled Workspace dialog. */
   settleWorkspaceAction: () => void
+  /** Dismiss the settled Workspace group dialog. */
+  settleGroupAction: () => void
   hooks: DirectoryPickingInjected['hooks'] & {
     workspaceActionRequest: HostObservable<WorkspaceActionRequest | null>
+    /** The pending group dialog request, until the dialog consumes or cancels it. */
+    groupActionRequest: HostObservable<WorkspaceGroupActionRequest | null>
     contextMenuTarget: HostObservable<ContextMenuTarget | null>
     /**
      * Fixed Host facts, reached through a hook rather than injected as values:
@@ -320,6 +337,19 @@ export type WorkspaceBrowserInjected = {
   renameWorkspace: (workspaceId: WorkspaceId, title: string) => Promise<void>
   /** Delete only a Host Workspace registration; directory and Session logs remain. */
   deleteWorkspace: (workspaceId: WorkspaceId) => Promise<void>
+  /** Create a Host Workspace group (non-blank title; resolves on durability). */
+  createGroup: (title: string) => Promise<readonly WorkspaceGroupView[]>
+  /** Rename a Host Workspace group. */
+  renameGroup: (groupId: WorkspaceGroupId, title: string) => Promise<readonly WorkspaceGroupView[]>
+  /** Delete a Host Workspace group; its members become ungrouped, never deleted. */
+  deleteGroup: (groupId: WorkspaceGroupId) => Promise<readonly WorkspaceGroupView[]>
+  /**
+   * Assign a Workspace to a group, or unassign it. Display metadata only:
+   * the registry order is untouched.
+   */
+  setWorkspaceGroup: (workspaceId: WorkspaceId, groupId?: WorkspaceGroupId) => Promise<void>
+  /** Raise the group create/rename/delete dialog. */
+  requestGroupAction: (request: WorkspaceGroupActionRequest) => void
   /**
    * Reorder a Workspace in the durable registry display order.
    * Omitted anchor appends to the end.

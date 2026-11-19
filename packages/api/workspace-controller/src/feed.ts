@@ -5,7 +5,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import { Deque } from '@deepseek-ai/dsh-deque'
 import type { DomainChanged } from '@deepseek-ai/dsh-storage-domain'
-import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
+import type { Workspace, WorkspaceGroup, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
 import {
   workspaceDomainState,
   workspaceRecord,
@@ -13,6 +13,7 @@ import {
 import type {
   WorkspaceBaseline,
   WorkspaceFollowFrame,
+  WorkspaceGroupView,
   WorkspaceView,
 } from './types.ts'
 
@@ -32,7 +33,17 @@ export function workspaceView(workspace: Workspace): WorkspaceView {
     sessionIds: [...workspace.sessionIds],
     createdAt: workspace.createdAt,
     updatedAt: workspace.updatedAt,
+    ...(workspace.groupId === undefined ? {} : { groupId: workspace.groupId }),
   }
+}
+
+/**
+ * Project one authoritative Workspace group into its Remote value.
+ * @param group - authoritative group row in group-table order.
+ * @returns detached group projection for Remote consumers.
+ */
+export function workspaceGroupView(group: WorkspaceGroup): WorkspaceGroupView {
+  return { groupId: group.id, title: group.title }
 }
 
 function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceView {
@@ -44,6 +55,7 @@ function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceVie
     sessionIds: [...record.sessionIds],
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    ...(record.groupId === undefined ? {} : { groupId: record.groupId }),
   }
 }
 
@@ -54,6 +66,7 @@ export class WorkspaceFeed {
   private order: readonly string[]
   private archived: readonly string[]
   private pinned: readonly string[]
+  private groups: readonly WorkspaceGroupView[]
 
   /** @param ctx - Host context containing the authoritative Workspace registry. */
   constructor(private readonly ctx: Context) {
@@ -62,6 +75,7 @@ export class WorkspaceFeed {
     this.order = baseline.map(workspace => String(workspace.id))
     this.archived = ctx.workspaceRegistry.archivedSessionIds.map(String)
     this.pinned = ctx.workspaceRegistry.pinnedSessionIds.map(String)
+    this.groups = ctx.workspaceRegistry.groups.map(workspaceGroupView)
     ctx.on('domain/changed', (change: DomainChanged) => { this.changed(change) })
     ctx.effect(() => () => {
       for (const follower of this.followers) follower.close()
@@ -71,13 +85,14 @@ export class WorkspaceFeed {
 
   /**
    * Read the complete current projection synchronously.
-   * @returns all active Workspaces plus archived and pinned Session identities.
+   * @returns all active Workspaces plus archived and pinned Session identities and the group table.
    */
   baseline(): WorkspaceBaseline {
     return {
       items: this.ctx.workspaceRegistry.list().map(workspaceView),
       archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds],
       pinnedSessionIds: [...this.ctx.workspaceRegistry.pinnedSessionIds],
+      groups: this.ctx.workspaceRegistry.groups.map(workspaceGroupView),
     }
   }
 
@@ -127,6 +142,11 @@ export class WorkspaceFeed {
         this.pinned = nextPinned
         this.publish({ type: 'pinned', pinnedSessionIds: [...state.pinnedSessionIds] })
       }
+      const nextGroups = state.workspaceGroups.map(workspaceGroupView)
+      if (!sameGroups(this.groups, nextGroups)) {
+        this.groups = nextGroups
+        this.publish({ type: 'groups', groups: nextGroups })
+      }
       return
     }
     if (change.table !== 'workspaces') return
@@ -149,6 +169,14 @@ export class WorkspaceFeed {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function sameGroups(left: readonly WorkspaceGroupView[], right: readonly WorkspaceGroupView[]): boolean {
+  return left.length === right.length
+    && left.every((group, index) => {
+      const other = right[index]
+      return other !== undefined && group.groupId === other.groupId && group.title === other.title
+    })
 }
 
 class WorkspaceFollower {

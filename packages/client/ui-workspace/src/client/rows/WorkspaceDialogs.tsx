@@ -1,8 +1,8 @@
 /** Workspace rename and removal dialogs, keyed by their captured request. */
 import { useEffect, useRef, useState } from 'react'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { WorkspaceActionRequest, WorkspaceBrowserProps } from '../contract/slots.ts'
+import type { WorkspaceGroupId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { WorkspaceActionRequest, WorkspaceBrowserProps, WorkspaceGroupActionRequest } from '../contract/slots.ts'
 import css from './WorkspaceBrowser.module.css'
 
 type Props = Pick<WorkspaceBrowserProps, 'renameWorkspace' | 'deleteWorkspace' | 'settleWorkspaceAction' | 't'> & {
@@ -135,6 +135,131 @@ export function WorkspaceDialogs({ request, workspaces, renameWorkspace, deleteW
       )}
     >
       {deleting && <div className={css.deleteStatus} role="status">{t('delete.pending')}</div>}
+      {deleteError !== null && <div className={css.renameError} role="alert">{deleteError}</div>}
+    </Modal>
+  </>
+}
+
+type GroupProps =
+  & Pick<WorkspaceBrowserProps, 'createGroup' | 'renameGroup' | 'deleteGroup' | 'settleGroupAction' | 't'>
+  & { request: WorkspaceGroupActionRequest }
+
+/**
+ * Group create, rename, and removal dialogs, keyed by their captured request.
+ * Create and rename share one title-input modal; delete confirms that members
+ * return to the top level while folders and sessions stay untouched.
+ * @param props - captured request, group mutations, and the locale seat.
+ * @returns the active dialog.
+ */
+export function WorkspaceGroupDialogs({ request, createGroup, renameGroup, deleteGroup, settleGroupAction, t }: GroupProps) {
+  const composingRef = useRef(false)
+  const textTarget = request.action === 'rename' || request.action === 'create' ? request : null
+  const [draft, setDraft] = useState(request.action === 'rename' ? request.displayTitle : '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const trimmed = draft.trim()
+  const blocked = busy || trimmed === '' || (request.action === 'rename' && trimmed === request.displayTitle)
+  const close = () => {
+    if (busy) return
+    settleGroupAction()
+    setError(null)
+  }
+  const confirm = () => {
+    if (textTarget === null || blocked) return
+    setBusy(true)
+    setError(null)
+    const settled = textTarget.action === 'create'
+      ? createGroup(trimmed)
+      : renameGroup(textTarget.groupId as WorkspaceGroupId, trimmed)
+    settled.then(() => {
+      setBusy(false)
+      settleGroupAction()
+    }).catch((reason: unknown) => {
+      setBusy(false)
+      setError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
+  const deleteTarget = request.action === 'delete' ? request : null
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const closeDelete = () => {
+    if (deleting) return
+    settleGroupAction()
+    setDeleteError(null)
+  }
+  const confirmDelete = () => {
+    /* v8 ignore next -- the Modal is absent without a target and its button is disabled while deleting. */
+    if (deleting || deleteTarget === null) return
+    setDeleting(true)
+    setDeleteError(null)
+    deleteGroup(deleteTarget.groupId as WorkspaceGroupId).then(() => {
+      setDeleting(false)
+      settleGroupAction()
+    }).catch((reason: unknown) => {
+      setDeleting(false)
+      setDeleteError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
+  return <>
+    <Modal
+      open={textTarget !== null}
+      onClose={close}
+      closeLabel={t('close')}
+      title={textTarget?.action === 'create' ? t('group.create.title') : t('group.rename.title')}
+      footer={(
+        <>
+          <Button variant="outline" disabled={busy} onClick={close}>{t('cancel')}</Button>
+          <Button variant="primary" disabled={blocked} onClick={confirm}>
+            {textTarget?.action === 'create' ? t('group.create') : t('rename')}
+          </Button>
+        </>
+      )}
+    >
+      <input
+        className={css.renameInput}
+        value={draft}
+        aria-label={t('field.groupName')}
+        data-modal-autofocus
+        disabled={busy}
+        onFocus={(e) => { e.target.select() }}
+        onChange={(e) => { setDraft(e.target.value); setError(null) }}
+        onCompositionStart={() => { composingRef.current = true }}
+        onCompositionEnd={() => { composingRef.current = false }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !composingRef.current) {
+            e.preventDefault()
+            confirm()
+          }
+        }}
+      />
+      {error !== null && <div className={css.renameError} role="alert">{error}</div>}
+    </Modal>
+
+    <Modal
+      open={deleteTarget !== null}
+      onClose={closeDelete}
+      closeLabel={t('close')}
+      title={t('group.delete')}
+      {...deleteTarget === null
+        ? {}
+        : { description: t('group.delete.desc', { name: deleteTarget.displayTitle }) }}
+      footer={(
+        <>
+          <Button variant="outline" disabled={deleting} onClick={closeDelete}>{t('cancel')}</Button>
+          <Button
+            variant="outline"
+            className={css.deleteAction}
+            disabled={deleting}
+            onClick={confirmDelete}
+          >
+            {t('group.delete')}
+          </Button>
+        </>
+      )}
+    >
+      {deleting && <div className={css.deleteStatus} role="status">{t('group.pending')}</div>}
       {deleteError !== null && <div className={css.renameError} role="alert">{deleteError}</div>}
     </Modal>
   </>

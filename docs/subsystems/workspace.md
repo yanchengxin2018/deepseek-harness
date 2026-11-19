@@ -64,6 +64,13 @@ interface Workspace {
   readonly sessionIds: readonly SessionId[]
 
   /**
+   * Group this workspace belongs to, or undefined when ungrouped. Membership
+   * is display metadata only: it never affects the registry order, session
+   * accounting, or the directory.
+   */
+  readonly groupId: WorkspaceGroupId | undefined
+
+  /**
    * List the stored headers of the current members.
    * @returns a new array with one header per entry of {@link sessionIds}, in the same order.
    */
@@ -75,6 +82,15 @@ interface Workspace {
    * @returns resolution after durability.
    */
   setTitle(title: string): Promise<void>
+
+  /**
+   * Assign this workspace to a group durably, or remove it from every group.
+   * Idempotent: the current assignment resolving to the same value writes
+   * nothing. The caller must name an existing group; the registry validates.
+   * @param groupId - The group to join, or undefined to unassign.
+   * @returns resolution after durability.
+   */
+  setGroup(groupId: WorkspaceGroupId | undefined): Promise<void>
 
   /**
    * Prepend a session to this workspace's candidate account. An already
@@ -431,6 +447,34 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('unpinSession') unpinSession(request: WorkspaceUnpinSessionRequest): Promise<WorkspacePinValue>
 
 /**
+ * Create one Workspace group.
+ * @param request - group title.
+ * @returns the complete resulting group table in group-table order.
+ */
+@Remote('createGroup') createGroup(request: WorkspaceGroupCreateRequest): Promise<WorkspaceGroupsValue>
+
+/**
+ * Rename one Workspace group.
+ * @param request - group identity and proposed title.
+ * @returns the complete resulting group table in group-table order.
+ */
+@Remote('renameGroup') renameGroup(request: WorkspaceGroupRenameRequest): Promise<WorkspaceGroupsValue>
+
+/**
+ * Delete one Workspace group; its members become ungrouped, never deleted.
+ * @param request - group identity to remove.
+ * @returns the complete resulting group table in group-table order.
+ */
+@Remote('deleteGroup') deleteGroup(request: WorkspaceGroupDeleteRequest): Promise<WorkspaceGroupsValue>
+
+/**
+ * Assign one Workspace to a Workspace group, or unassign it.
+ * @param request - Workspace identity plus the group to join, or none to unassign.
+ * @returns the updated Workspace projection.
+ */
+@Remote('setWorkspaceGroup') setWorkspaceGroup(request: WorkspaceGroupAssignRequest): Promise<WorkspaceValue>
+
+/**
  * Stream a complete Workspace baseline followed by ordered increments. A
  * non-owner receives only the Workspaces and Sessions `allows()` admits.
  * When a delivered Workspace is no longer admitted at its next change or
@@ -638,6 +682,43 @@ pinSession(sessionId: SessionId): Promise<void>
  * @returns resolution after durability.
  */
 unpinSession(sessionId: SessionId): Promise<void>
+
+/**
+ * Create one workspace group durably, appending it to the group table.
+ * @param title - Display title; any non-blank string, duplicates allowed.
+ * @returns the created group.
+ */
+createGroup(title: string): Promise<WorkspaceGroup>
+
+/**
+ * Rename one workspace group durably. An id that is not in the group table
+ * rejects; a rename to the current title resolves without writing.
+ * @param id - Group to rename.
+ * @param title - New display title; any non-blank string, duplicates allowed.
+ * @returns resolution after durability.
+ */
+renameGroup(id: WorkspaceGroupId, title: string): Promise<void>
+
+/**
+ * Delete one workspace group durably. Every member record is unassigned in
+ * the same queued operation before the group row is dropped, so no
+ * committed state ever references a missing group; workspaces and their
+ * sessions are untouched. An unknown id resolves without writing.
+ * @param id - Group to delete.
+ * @returns `true` when a group row was deleted, `false` when it was unknown.
+ */
+deleteGroup(id: WorkspaceGroupId): Promise<boolean>
+
+/**
+ * Assign one workspace to a group durably, or remove its assignment. The
+ * workspace must be in the durable order and the group (when named) in the
+ * group table. Display metadata only: the registry order is untouched.
+ * An assignment resolving to the current value writes nothing.
+ * @param id - Workspace to assign.
+ * @param groupId - Group to join, or undefined to unassign.
+ * @returns resolution after durability.
+ */
+setWorkspaceGroup(id: WorkspaceId, groupId?: WorkspaceGroupId): Promise<void>
 
 /**
  * Resolve by canonical directory path without creating or mutating a
