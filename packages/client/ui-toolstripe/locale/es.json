@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Barra de herramientas",
+    "description": "Ventanas de herramientas estilo IDE: tareas, árbol de archivos del proyecto, confirmación, Git y la terminal."
+  }
+}

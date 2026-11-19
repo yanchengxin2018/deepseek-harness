@@ -62,3 +62,12 @@ export function computeColumns(
     : Math.min(available, clampWidth(rightbar, RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO))
   return { sidebar: s, center: Math.max(0, viewport - s - r), rightbar: r }
 }
+
+/** Tool stripe (far-left icon column) fixed width. */
+export const TOOLSTRIPE_WIDTH = 44
+/** Left tool-dock drag clamp floor. */
+export const TOOLS_MIN = 220
+/** Left tool-dock drag clamp ceiling. */
+export const TOOLS_MAX = 480
+/** Left tool-dock width before any user drag. */
+export const TOOLS_DEFAULT = 280

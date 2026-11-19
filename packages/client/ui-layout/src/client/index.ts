@@ -14,6 +14,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PanelInfo } from './service.ts'
+import type { LayoutInfo } from './stores.ts'
 import { AppFrame } from './AppFrame.tsx'
 import type { AppFrameInjected } from './AppFrame.tsx'
 import { createLayoutStore } from './stores.ts'
@@ -29,6 +30,7 @@ import { ThemePresenter } from './theme-presenter.ts'
 // against; the frame components and the store factory are package-internal.
 export { LayoutController } from './service.ts'
 export type { ILayout, MainPanelId, PanelInfo } from './service.ts'
+export type { LayoutInfo } from './stores.ts'
 
 /** Selector hook over root-scoped panel selection. */
 export type UsePanelInfo = SnapshotSelectorHook<PanelInfo>
@@ -119,6 +121,21 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * the lights or the controls.
      */
     'shell.leading': { kind: 'single'; scope: 'root' }
+    /**
+     * The far-left tool stripe: a fixed-width icon column before the sidebar,
+     * rendered in every wide mode (hidden with the sidebar's drawer). OCCUPIED
+     * by the tool-stripe plugin's vertical buttons, which toggle the left
+     * dock ('shell.tools'), the sidebar, and docked tabs elsewhere.
+     */
+    'shell.toolstripe.left': { kind: 'single'; scope: 'root' }
+    /**
+     * The left tool dock: a resizable column between the tool stripe and the
+     * sidebar. Whether it is drawn is reported by its occupant through
+     * 'ctx.layout' ('openTools'/'closeTools'); the frame sizes and collapses
+     * the track from that report, exactly as the right column does. The
+     * occupant decides which tool panel its body shows.
+     */
+    'shell.tools': { kind: 'single'; scope: 'root'; owner: ToolsOwnerProps }
   }
 }
 
@@ -148,6 +165,14 @@ export interface RightbarOwnerProps {
    * Before a narrow opening, includes the space from collapsing the left sidebar.
    */
   canShow: boolean
+}
+
+/** Left tool-dock owner share: the resolved dock geometry. */
+export interface ToolsOwnerProps {
+  /** Resolved dock width in px; zero when the dock is collapsed or cannot fit. */
+  width: number
+  /** Current frame width in px. */
+  viewportWidth: number
 }
 
 /** Required services (cordis fiber inject — the loader passes all module exports as an object plugin). */
@@ -185,8 +210,12 @@ export function apply(ctx: ClientContext): void {
       getSnapshot: () => instance.getSnapshot().panelInfo,
       subscribe: listener => instance.subscribe(listener),
     }
+    const layoutInfo: HostObservable<LayoutInfo> = {
+      getSnapshot: () => instance.getSnapshot().layoutInfo,
+      subscribe: listener => instance.subscribe(listener),
+    }
     const layout = new LayoutController(instance.actions, id =>
-      ctx.slots.entries('main').some(entry => entry.options.key === id), panelInfo)
+      ctx.slots.entries('main').some(entry => entry.options.key === id), panelInfo, layoutInfo)
     const disposePanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })
     const disposeService = ctx.reflect.provide('layout', layout)
     const disposeRegistration = ctx.slots.register({
@@ -199,6 +228,8 @@ export function apply(ctx: ClientContext): void {
         'shell.bottom': { kind: 'single', scope: 'root' },
         'shell.overlay': { kind: 'list', scope: 'root' },
         'shell.leading': { kind: 'single', scope: 'root' },
+        'shell.toolstripe.left': { kind: 'single', scope: 'root' },
+        'shell.tools': { kind: 'single', scope: 'root' },
       },
       store,
       inject: (): AppFrameInjected => ({ hooks: { foldedLandscape } }),

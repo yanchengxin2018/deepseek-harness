@@ -7,6 +7,7 @@ import type { MainPanelId } from './service.ts'
 import {
   clampWidth, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN,
   SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT, SIDEBAR_DRAWER_BREAKPOINT, SIDEBAR_MAX, SIDEBAR_MIN,
+  TOOLS_DEFAULT, TOOLS_MAX, TOOLS_MIN,
 } from './columns.ts'
 
 /**
@@ -21,8 +22,15 @@ type LayoutState = {
   layoutInfo: LayoutInfo
 }
 
-type LayoutInfo = {
+export type LayoutInfo = {
   sidebar: number
+  /**
+   * Saved left tool-dock width in px, or null before its first opening.
+   * Closing the dock preserves this preference; dragging updates it.
+   */
+  toolsWidth: number | null
+  /** Whether the left tool dock is drawn at all (the stripe always is). */
+  toolsShown: boolean
   /** Last positive frame measurement; window width bootstraps the first render. */
   viewportWidth: number
   narrowExpanded: boolean
@@ -64,6 +72,9 @@ type LayoutActions = {
   setRightbar: (draft: LayoutState, px: number) => void
   openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean) => void
   closeRightbar: (draft: LayoutState) => void
+  openTools: (draft: LayoutState, px?: number) => void
+  closeTools: (draft: LayoutState) => void
+  setToolsWidth: (draft: LayoutState, px: number) => void
 }
 
 /**
@@ -83,6 +94,8 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         sidebar: SIDEBAR_DEFAULT,
         viewportWidth: window.innerWidth,
         narrowExpanded: false,
+        toolsWidth: null,
+        toolsShown: false,
         rightbar: null,
         rightbarShown: false,
         rightbarTrack: false,
@@ -141,6 +154,17 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         d.layoutInfo.rightbarShown = false
         d.layoutInfo.rightbarTrack = false
         d.layoutInfo.rightbarFullscreen = false
+      },
+      openTools: (d, px?: number) => {
+        if (px !== undefined) d.layoutInfo.toolsWidth = clampWidth(px, TOOLS_MIN, TOOLS_MAX)
+        d.layoutInfo.toolsWidth ??= TOOLS_DEFAULT
+        d.layoutInfo.toolsShown = true
+      },
+      closeTools: (d) => {
+        d.layoutInfo.toolsShown = false
+      },
+      setToolsWidth: (d, px: number) => {
+        d.layoutInfo.toolsWidth = clampWidth(px, TOOLS_MIN, TOOLS_MAX)
       },
     },
   })

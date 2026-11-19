@@ -1,0 +1,18 @@
+/* The project tool panel body. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px 0;
+}
+
+.empty,
+.notice {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.notice[role='alert'] {
+  color: var(--dsw-alias-state-danger-label, var(--dsw-alias-label-secondary));
+}

@@ -10,7 +10,7 @@
  */
 import type { BoundActions, HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { createLayoutStore } from './stores.ts'
+import type { LayoutInfo, createLayoutStore } from './stores.ts'
 
 /** Identity shared by a sidebar panel entry and its main-slot occupant. */
 export type MainPanelId = Branded<'MainPanelId'>
@@ -28,6 +28,8 @@ export type PanelActions = BoundActions<ReturnType<typeof createLayoutStore>>
 export interface ILayout {
   /** Selected central panel from the same root store used by `usePanelInfo`. */
   readonly panelInfo: HostObservable<PanelInfo>
+  /** Root-scoped frame geometry: column widths and shown states. */
+  readonly layoutInfo: HostObservable<LayoutInfo>
   /**
    * Select a global central panel without changing the current Session.
    * @param panelId - registered main key, or null to show the Conversation.
@@ -51,6 +53,15 @@ export interface ILayout {
   openRightbar(track: boolean, fullscreen: boolean): void
   /** Report the right panel as hidden: no track, no handle. */
   closeRightbar(): void
+  /**
+   * Show the left tool dock, optionally restating its width preference first.
+   * The dock's content (which tool panel) is the occupant's own business; the
+   * frame only sizes the column from this report.
+   * @param width - width preference in px; omitted keeps the saved one.
+   */
+  openTools(width?: number): void
+  /** Report the left tool dock as hidden: the column collapses to nothing. */
+  closeTools(): void
 }
 
 /** Cross-plugin panel-action face (ctx.layout). */
@@ -61,11 +72,19 @@ export class LayoutController implements ILayout {
    * @param panels - actions of the instance shared with the root entry.
    * @param hasMainPanel - checks the live main-slot registry for a panel id.
    * @param panelInfo - root store's shared central-panel selection source.
+   * @param layoutInfo - root store's shared frame geometry source; absent only
+   *   in tests that never touch column geometry.
    */
   constructor(
     private readonly panels: PanelActions,
     private readonly hasMainPanel: (id: MainPanelId) => boolean,
     readonly panelInfo: HostObservable<PanelInfo>,
+    readonly layoutInfo: HostObservable<LayoutInfo> = {
+      getSnapshot: () => {
+        throw new Error('layout.layoutInfo: this controller was built without a geometry source')
+      },
+      subscribe: () => () => {},
+    },
   ) {}
 
   /** Select a global panel or return to the Conversation. */
@@ -102,5 +121,13 @@ export class LayoutController implements ILayout {
   /** Report the right panel as hidden: no track, no handle. */
   closeRightbar(): void {
     this.panels.closeRightbar()
+  }
+
+  openTools(width?: number): void {
+    this.panels.openTools(width)
+  }
+
+  closeTools(): void {
+    this.panels.closeTools()
   }
 }

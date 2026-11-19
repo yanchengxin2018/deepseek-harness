@@ -13,6 +13,9 @@ function fakePanels(): PanelActions {
     setRightbar: vi.fn(),
     openRightbar: vi.fn(),
     closeRightbar: vi.fn(),
+    openTools: vi.fn(),
+    closeTools: vi.fn(),
+    setToolsWidth: vi.fn(),
   }
 }
 

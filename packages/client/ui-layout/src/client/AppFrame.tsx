@@ -19,7 +19,7 @@ import type { ReactNode } from 'react'
 import type {
   HostObservable, InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import { CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_DRAWER_BREAKPOINT } from './columns.ts'
+import { CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_DRAWER_BREAKPOINT, TOOLSTRIPE_WIDTH, TOOLS_MAX, TOOLS_MIN } from './columns.ts'
 import { DocumentTitle } from './DocumentTitle.tsx'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
@@ -32,7 +32,7 @@ export interface AppFrameInjected {
 /** Full composed props: runtime, child slots, store, locale, and injected posture. */
 export type AppFrameProps =
   & PropsRuntime<'root'>
-  & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.bottom' | 'shell.overlay' | 'shell.leading'>
+  & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.bottom' | 'shell.overlay' | 'shell.leading' | 'shell.toolstripe.left' | 'shell.tools'>
   & PropsStore<ReturnType<typeof createLayoutStore>>
   & PropsLocale<'common'>
   & InjectFace<AppFrameInjected>
@@ -181,6 +181,14 @@ export function AppFrame({
   const sidebarPreference = sidebarCollapsed
     ? 0
     : layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : layoutInfo.sidebar
+  // The far-left stripe is fixed chrome; the tool dock is its occupant's
+  // reported business. Both collapse with the drawer, and the column solve
+  // prices them as left chrome so the center keeps its protected minimum.
+  const stripeWidth = drawer ? 0 : TOOLSTRIPE_WIDTH
+  const toolsWidth = layoutInfo.toolsShown && !drawer
+    ? clampWidth(layoutInfo.toolsWidth ?? 0, TOOLS_MIN, TOOLS_MAX)
+    : 0
+  const solveViewport = viewport - stripeWidth - toolsWidth
   const rightbarPreference = layoutInfo.rightbar ?? viewport * RIGHTBAR_DEFAULT_RATIO
   // Desktop reopen controls occupy the frame's shell.leading seat (macOS) or
   // the Windows caption row; neither platform keeps an icon rail.
@@ -189,10 +197,10 @@ export function AppFrame({
   // Opening on a narrow frame collapses the left sidebar. Eligibility must
   // include that space before the occupant's first shown report arrives.
   const normal = computeColumns(
-    viewport, !layoutInfo.rightbarShown && narrow ? 0 : sidebarPreference, rightbarPreference, collapsedWidth, centeredSidebar,
+    solveViewport, !layoutInfo.rightbarShown && narrow ? 0 : sidebarPreference, rightbarPreference, collapsedWidth, centeredSidebar,
   )
   const cols = computeColumns(
-    viewport, drawer ? 0 : sidebarPreference, layoutInfo.rightbarTrack ? rightbarPreference : 0, collapsedWidth, centeredSidebar,
+    solveViewport, drawer ? 0 : sidebarPreference, layoutInfo.rightbarTrack ? rightbarPreference : 0, collapsedWidth, centeredSidebar,
   )
   const colsRef = useRef(cols)
   colsRef.current = cols
@@ -251,6 +259,7 @@ export function AppFrame({
   }, [animating])
   const onDragEnd = useCallback(() => { setDragging(false) }, [])
   const onSidebarStart = useCallback(() => { sidebarBase.current = colsRef.current.sidebar; setDragging(true) }, [])
+  const onToolsStart = useCallback(() => { setDragging(true) }, [])
   const onSidebarDrag = useCallback((dx: number) => {
     actions.setSidebar(sidebarBase.current + dx)
   }, [actions])
@@ -291,11 +300,12 @@ export function AppFrame({
       className={css.frame}
       style={{
         ...(windowsTitlebar
-          ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
+          ? { '--dsh-windows-sidebar-width': `${stripeWidth + toolsWidth + cols.sidebar}px` } : {}),
         gridTemplateColumns:
-          `${cols.sidebar}px minmax(${cols.rightbar === 0 ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightbarMax}px)`,
+          `${stripeWidth}px ${toolsWidth}px ${cols.sidebar}px minmax(${cols.rightbar === 0 ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightbarMax}px)`,
       }}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
+      data-tools-shown={toolsWidth > 0 || undefined}
       data-sidebar-drawer={drawer || undefined}
       data-sidebar-instant={drawer && sidebarCollapsed && sidebarTransition.instant || undefined}
       data-rightbar-collapsed={cols.rightbar === 0 || undefined}
@@ -311,6 +321,15 @@ export function AppFrame({
       />
       {drawer && <div className={css.drawerMask} data-sidebar-mask aria-hidden="true"
         onClick={drawerOpen ? () => { actions.toggleSidebar() } : undefined} />}
+      {stripeWidth > 0 && (
+        <div className={css.toolstripeCol} data-shell-toolstripe {...{ inert: drawerOpen ? '' : undefined }}>
+          {renderSlot('shell.toolstripe.left', {})}
+        </div>
+      )}
+      <div className={css.toolsCol} data-shell-tools data-tools-open={toolsWidth > 0 || undefined}
+        {...{ inert: drawerOpen ? '' : undefined }}>
+        {renderSlot('shell.tools', { width: toolsWidth, viewportWidth: viewport })}
+      </div>
       <div className={css.sidebarCol}
         style={drawer ? { width: sidebarWidth } : undefined}
         {...{ inert: drawer && sidebarCollapsed ? '' : undefined }}>
@@ -334,7 +353,15 @@ export function AppFrame({
         </div>
       )}
       {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!drawer && !centeredSidebar && !sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+      {!drawer && !centeredSidebar && !sidebarCollapsed && (
+        <DragHandle side="sidebar" left={stripeWidth + toolsWidth + cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />
+      )}
+      {toolsWidth > 0 && (
+        <DragHandle
+          side="sidebar" left={stripeWidth + toolsWidth} onStart={onToolsStart}
+          onDrag={(dx) => { actions.setToolsWidth(toolsWidth + dx) }} onEnd={onDragEnd}
+        />
+      )}
       {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
         <DragHandle side="rightbar" left={viewport - normal.rightbar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onDragEnd} />
       )}

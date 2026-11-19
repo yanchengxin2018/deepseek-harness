@@ -339,6 +339,11 @@
     - id: ui-sidebar-files
       name: '@deepseek-ai/dsh-client-ui-sidebar-files'
 
+    # The far-left IDE-style tool stripe and the left tool dock it toggles
+    # (tasks sidebar, project file tree; terminal opens the right dock's tab).
+    - id: ui-toolstripe
+      name: '@deepseek-ai/dsh-client-ui-toolstripe'
+
     - id: ui-settings
       name: '@deepseek-ai/dsh-client-ui-settings'
 
